@@ -5,9 +5,7 @@ zerops:
       buildCommands:
         - mkdir -p dist
         - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
-        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/s3-fetch ./cmd/s3-fetch
-      addToRunPrepare:
-        - ./dist/s3-fetch
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o s3-fetch ./cmd/s3-fetch
       deployFiles:
         - .
     deploy:
@@ -22,11 +20,16 @@ zerops:
         - port: 18080
           httpSupport: false
           protocol: tcp
-      prepareCommands:
-        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - cd /home/zerops && sed -i 's#  .*#  node-image.tar.gz#' node-image.tar.gz.sha256 && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
       initCommands:
+        - |
+          if ! docker image inspect "$K8S_NODE_IMAGE" >/dev/null 2>&1; then
+            ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+            ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+            sed -i 's#  .*#  node-image.tar.gz#' /home/zerops/node-image.tar.gz.sha256
+            (cd /home/zerops && sha256sum -c node-image.tar.gz.sha256)
+            docker image load -i /home/zerops/node-image.tar.gz
+            rm -f /home/zerops/node-image.tar.gz /home/zerops/node-image.tar.gz.sha256
+          fi
         - sudo mkdir -p /var/lib/zerops-k8s
         - sudo chown -R zerops:zerops /var/lib/zerops-k8s
         - sudo mount --make-rshared /
@@ -51,9 +54,7 @@ zerops:
       buildCommands:
         - mkdir -p dist
         - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
-        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/s3-fetch ./cmd/s3-fetch
-      addToRunPrepare:
-        - ./dist/s3-fetch
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o s3-fetch ./cmd/s3-fetch
       deployFiles:
         - .
     deploy:
@@ -68,11 +69,16 @@ zerops:
         - port: 18080
           httpSupport: false
           protocol: tcp
-      prepareCommands:
-        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - cd /home/zerops && sed -i 's#  .*#  node-image.tar.gz#' node-image.tar.gz.sha256 && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
       initCommands:
+        - |
+          if ! docker image inspect "$K8S_NODE_IMAGE" >/dev/null 2>&1; then
+            ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+            ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+            sed -i 's#  .*#  node-image.tar.gz#' /home/zerops/node-image.tar.gz.sha256
+            (cd /home/zerops && sha256sum -c node-image.tar.gz.sha256)
+            docker image load -i /home/zerops/node-image.tar.gz
+            rm -f /home/zerops/node-image.tar.gz /home/zerops/node-image.tar.gz.sha256
+          fi
         - sudo mkdir -p /var/lib/zerops-k8s
         - sudo chown -R zerops:zerops /var/lib/zerops-k8s
         - sudo mount --make-rshared /
@@ -101,9 +107,7 @@ zerops:
       buildCommands:
         - mkdir -p dist
         - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
-        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/s3-fetch ./cmd/s3-fetch
-      addToRunPrepare:
-        - ./dist/s3-fetch
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o s3-fetch ./cmd/s3-fetch
       deployFiles:
         - .
     deploy:
@@ -118,11 +122,16 @@ zerops:
         - port: 18080
           httpSupport: false
           protocol: tcp
-      prepareCommands:
-        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - cd /home/zerops && sed -i 's#  .*#  node-image.tar.gz#' node-image.tar.gz.sha256 && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
       initCommands:
+        - |
+          if ! docker image inspect "$K8S_NODE_IMAGE" >/dev/null 2>&1; then
+            ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+            ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+            sed -i 's#  .*#  node-image.tar.gz#' /home/zerops/node-image.tar.gz.sha256
+            (cd /home/zerops && sha256sum -c node-image.tar.gz.sha256)
+            docker image load -i /home/zerops/node-image.tar.gz
+            rm -f /home/zerops/node-image.tar.gz /home/zerops/node-image.tar.gz.sha256
+          fi
         - sudo mkdir -p /var/lib/zerops-k8s
         - sudo chown -R zerops:zerops /var/lib/zerops-k8s
         - sudo mount --make-rshared /
@@ -151,9 +160,7 @@ zerops:
       buildCommands:
         - mkdir -p dist
         - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
-        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/s3-fetch ./cmd/s3-fetch
-      addToRunPrepare:
-        - ./dist/s3-fetch
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o s3-fetch ./cmd/s3-fetch
       deployFiles:
         - .
     deploy:
@@ -168,11 +175,16 @@ zerops:
         - port: 18080
           httpSupport: false
           protocol: tcp
-      prepareCommands:
-        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - cd /home/zerops && sed -i 's#  .*#  node-image.tar.gz#' node-image.tar.gz.sha256 && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
       initCommands:
+        - |
+          if ! docker image inspect "$K8S_NODE_IMAGE" >/dev/null 2>&1; then
+            ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+            ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+            sed -i 's#  .*#  node-image.tar.gz#' /home/zerops/node-image.tar.gz.sha256
+            (cd /home/zerops && sha256sum -c node-image.tar.gz.sha256)
+            docker image load -i /home/zerops/node-image.tar.gz
+            rm -f /home/zerops/node-image.tar.gz /home/zerops/node-image.tar.gz.sha256
+          fi
         - sudo mkdir -p /var/lib/zerops-k8s
         - sudo chown -R zerops:zerops /var/lib/zerops-k8s
         - sudo mount --make-rshared /
@@ -199,9 +211,7 @@ zerops:
       buildCommands:
         - mkdir -p dist
         - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
-        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/s3-fetch ./cmd/s3-fetch
-      addToRunPrepare:
-        - ./dist/s3-fetch
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o s3-fetch ./cmd/s3-fetch
       deployFiles:
         - .
     deploy:
@@ -216,11 +226,16 @@ zerops:
         - port: 18080
           httpSupport: false
           protocol: tcp
-      prepareCommands:
-        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - cd /home/zerops && sed -i 's#  .*#  node-image.tar.gz#' node-image.tar.gz.sha256 && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
       initCommands:
+        - |
+          if ! docker image inspect "$K8S_NODE_IMAGE" >/dev/null 2>&1; then
+            ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+            ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+            sed -i 's#  .*#  node-image.tar.gz#' /home/zerops/node-image.tar.gz.sha256
+            (cd /home/zerops && sha256sum -c node-image.tar.gz.sha256)
+            docker image load -i /home/zerops/node-image.tar.gz
+            rm -f /home/zerops/node-image.tar.gz /home/zerops/node-image.tar.gz.sha256
+          fi
         - sudo mkdir -p /var/lib/zerops-k8s
         - sudo chown -R zerops:zerops /var/lib/zerops-k8s
         - sudo mount --make-rshared /
@@ -247,9 +262,7 @@ zerops:
       buildCommands:
         - mkdir -p dist
         - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
-        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/s3-fetch ./cmd/s3-fetch
-      addToRunPrepare:
-        - ./dist/s3-fetch
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o s3-fetch ./cmd/s3-fetch
       deployFiles:
         - .
     deploy:
@@ -264,11 +277,16 @@ zerops:
         - port: 18080
           httpSupport: false
           protocol: tcp
-      prepareCommands:
-        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - cd /home/zerops && sed -i 's#  .*#  node-image.tar.gz#' node-image.tar.gz.sha256 && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
       initCommands:
+        - |
+          if ! docker image inspect "$K8S_NODE_IMAGE" >/dev/null 2>&1; then
+            ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+            ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+            sed -i 's#  .*#  node-image.tar.gz#' /home/zerops/node-image.tar.gz.sha256
+            (cd /home/zerops && sha256sum -c node-image.tar.gz.sha256)
+            docker image load -i /home/zerops/node-image.tar.gz
+            rm -f /home/zerops/node-image.tar.gz /home/zerops/node-image.tar.gz.sha256
+          fi
         - sudo mkdir -p /var/lib/zerops-k8s
         - sudo chown -R zerops:zerops /var/lib/zerops-k8s
         - sudo mount --make-rshared /
