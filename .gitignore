@@ -1,0 +1,11 @@
+/.github-token
+/.env
+/.env.*
+!/.env.example
+/dist/
+/artifacts/
+/dist/
+/kubeconfig
+*.log
+*.tar
+*.tar.gz

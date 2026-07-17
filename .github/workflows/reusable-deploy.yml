@@ -1,0 +1,65 @@
+name: Reusable Zerops Kubernetes deployment
+
+on:
+  workflow_call:
+    inputs:
+      run_full_conformance:
+        description: Run the full CNCF certified-conformance suite
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      ZEROPS_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zerops-k8s-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.actor == github.repository_owner || github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      ZEROPS_CLIENT_ID: ${{ vars.ZEROPS_CLIENT_ID }}
+      RUN_FULL_CONFORMANCE: ${{ inputs.run_full_conformance }}
+    steps:
+      - name: Check out the exact requested revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Enforce repository-owner trigger
+        shell: bash
+        run: |
+          [[ "$GITHUB_ACTOR" == "$GITHUB_REPOSITORY_OWNER" ]] || {
+            echo 'Only the repository owner may deploy.' >&2
+            exit 1
+          }
+
+      - name: Install pinned deployment tools
+        shell: bash
+        run: ./scripts/install-tools.sh
+
+      - name: Authenticate to Zerops
+        shell: bash
+        run: zcli login "$ZEROPS_TOKEN"
+
+      - name: Provision, deploy, test, and collect evidence
+        shell: bash
+        run: ./scripts/deploy.sh
+
+      - name: Upload sanitized acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: zerops-k8s-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/evidence
+          if-no-files-found: warn
+          retention-days: 1

@@ -1,0 +1,78 @@
+groups:
+  - name: zerops-kubernetes-defaults
+    rules:
+      - alert: KubeNodeNotReady
+        expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "Kubernetes node is not Ready"}
+      - alert: KubePodCrashLooping
+        expr: rate(kube_pod_container_status_restarts_total[10m]) * 60 * 5 > 1
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "Pod is crash looping"}
+      - alert: KubePodNotReady
+        expr: sum by (namespace, pod) (max by(namespace, pod, condition) (kube_pod_status_ready{condition="true"} == 0)) > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "Pod has remained unready"}
+      - alert: KubeDeploymentReplicasMismatch
+        expr: kube_deployment_spec_replicas != kube_deployment_status_replicas_available
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "Deployment availability does not match its specification"}
+      - alert: KubeDaemonSetRolloutStuck
+        expr: kube_daemonset_status_number_ready != kube_daemonset_status_desired_number_scheduled
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "DaemonSet rollout is stuck"}
+      - alert: KubeStatefulSetReplicasMismatch
+        expr: kube_statefulset_status_replicas_ready != kube_statefulset_replicas
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "StatefulSet replicas are unavailable"}
+      - alert: KubePersistentVolumeFillingUp
+        expr: kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes < 0.15
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "Persistent volume has less than 15% free space"}
+      - alert: KubePersistentVolumeErrors
+        expr: kube_persistentvolume_status_phase{phase=~"Failed|Pending"} > 0
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "Persistent volume is failed or pending"}
+      - alert: KubeCPUOvercommit
+        expr: sum(namespace_cpu:kube_pod_container_resource_requests:sum) / sum(kube_node_status_allocatable{resource="cpu"}) > 1.5
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Cluster CPU requests are heavily overcommitted"}
+      - alert: KubeMemoryOvercommit
+        expr: sum(namespace_memory:kube_pod_container_resource_requests:sum) / sum(kube_node_status_allocatable{resource="memory"}) > 1
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Cluster memory requests exceed allocatable memory"}
+      - alert: KubeAPIDown
+        expr: absent(up{job=~".*apiserver.*"} == 1)
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "Kubernetes API metrics are unavailable"}
+      - alert: EtcdMembersDown
+        expr: max(etcd_server_has_leader) == 0 or sum(up{job=~".*etcd.*"} == 0) > 0
+        for: 3m
+        labels: {severity: critical}
+        annotations: {summary: "One or more etcd members are unhealthy"}
+      - alert: CertificateExpiringSoon
+        expr: apiserver_client_certificate_expiration_seconds_count{le="604800"} > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "A Kubernetes client certificate expires within seven days"}
+      - alert: CalicoFelixDown
+        expr: absent(felix_active_local_endpoints)
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Calico Felix metrics are unavailable"}
+      - alert: IstioControlPlaneDown
+        expr: absent(pilot_info)
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Istio control-plane metrics are unavailable"}

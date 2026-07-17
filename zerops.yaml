@@ -1,0 +1,402 @@
+zerops:
+  - setup: controlplane1
+    build:
+      base: go@1.22
+      buildCommands:
+        - mkdir -p dist
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/s3-fetch ./cmd/s3-fetch
+      addToRunPrepare:
+        - ./dist/s3-fetch
+      deployFiles:
+        - .
+    deploy:
+      temporaryShutdown: true
+      readinessCheck:
+        httpGet:
+          port: 18080
+          path: /healthz
+    run:
+      base: docker@26.1.5
+      ports:
+        - port: 18080
+          httpSupport: false
+          protocol: tcp
+      prepareCommands:
+        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+        - cd /home/zerops && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
+      initCommands:
+        - sudo mkdir -p /var/lib/zerops-k8s
+        - sudo chown -R zerops:zerops /var/lib/zerops-k8s
+        - sudo mount --make-rshared /
+      envVariables:
+        K8S_MODE: node
+        K8S_NODE_ROLE: control-plane
+        K8S_NODE_NAME: k8scp1
+        AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
+        AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
+        AWS_DEFAULT_REGION: us-east-1
+        K8S_IMAGE_STORAGE_ENDPOINT: ${k8sbackups_apiUrl}
+        K8S_IMAGE_STORAGE_BUCKET: ${k8sbackups_bucketName}
+      healthCheck:
+        httpGet:
+          port: 18080
+          path: /healthz
+      start: ./dist/zerops-k8s
+
+  - setup: controlplane2
+    build:
+      base: go@1.22
+      buildCommands:
+        - mkdir -p dist
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/s3-fetch ./cmd/s3-fetch
+      addToRunPrepare:
+        - ./dist/s3-fetch
+      deployFiles:
+        - .
+    deploy:
+      temporaryShutdown: true
+      readinessCheck:
+        httpGet:
+          port: 18080
+          path: /healthz
+    run:
+      base: docker@26.1.5
+      ports:
+        - port: 18080
+          httpSupport: false
+          protocol: tcp
+      prepareCommands:
+        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+        - cd /home/zerops && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
+      initCommands:
+        - sudo mkdir -p /var/lib/zerops-k8s
+        - sudo chown -R zerops:zerops /var/lib/zerops-k8s
+        - sudo mount --make-rshared /
+      envVariables:
+        K8S_MODE: node
+        K8S_NODE_ROLE: control-plane
+        K8S_NODE_NAME: k8scp2
+        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
+        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
+        K8S_CERTIFICATE_KEY: ${k8scp1_K8S_CERTIFICATE_KEY}
+        K8S_ENCRYPTION_KEY: ${k8scp1_K8S_ENCRYPTION_KEY}
+        AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
+        AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
+        AWS_DEFAULT_REGION: us-east-1
+        K8S_IMAGE_STORAGE_ENDPOINT: ${k8sbackups_apiUrl}
+        K8S_IMAGE_STORAGE_BUCKET: ${k8sbackups_bucketName}
+      healthCheck:
+        httpGet:
+          port: 18080
+          path: /healthz
+      start: ./dist/zerops-k8s
+
+  - setup: controlplane3
+    build:
+      base: go@1.22
+      buildCommands:
+        - mkdir -p dist
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/s3-fetch ./cmd/s3-fetch
+      addToRunPrepare:
+        - ./dist/s3-fetch
+      deployFiles:
+        - .
+    deploy:
+      temporaryShutdown: true
+      readinessCheck:
+        httpGet:
+          port: 18080
+          path: /healthz
+    run:
+      base: docker@26.1.5
+      ports:
+        - port: 18080
+          httpSupport: false
+          protocol: tcp
+      prepareCommands:
+        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+        - cd /home/zerops && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
+      initCommands:
+        - sudo mkdir -p /var/lib/zerops-k8s
+        - sudo chown -R zerops:zerops /var/lib/zerops-k8s
+        - sudo mount --make-rshared /
+      envVariables:
+        K8S_MODE: node
+        K8S_NODE_ROLE: control-plane
+        K8S_NODE_NAME: k8scp3
+        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
+        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
+        K8S_CERTIFICATE_KEY: ${k8scp1_K8S_CERTIFICATE_KEY}
+        K8S_ENCRYPTION_KEY: ${k8scp1_K8S_ENCRYPTION_KEY}
+        AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
+        AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
+        AWS_DEFAULT_REGION: us-east-1
+        K8S_IMAGE_STORAGE_ENDPOINT: ${k8sbackups_apiUrl}
+        K8S_IMAGE_STORAGE_BUCKET: ${k8sbackups_bucketName}
+      healthCheck:
+        httpGet:
+          port: 18080
+          path: /healthz
+      start: ./dist/zerops-k8s
+
+  - setup: worker1
+    build:
+      base: go@1.22
+      buildCommands:
+        - mkdir -p dist
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/s3-fetch ./cmd/s3-fetch
+      addToRunPrepare:
+        - ./dist/s3-fetch
+      deployFiles:
+        - .
+    deploy:
+      temporaryShutdown: true
+      readinessCheck:
+        httpGet:
+          port: 18080
+          path: /healthz
+    run:
+      base: docker@26.1.5
+      ports:
+        - port: 18080
+          httpSupport: false
+          protocol: tcp
+      prepareCommands:
+        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+        - cd /home/zerops && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
+      initCommands:
+        - sudo mkdir -p /var/lib/zerops-k8s
+        - sudo chown -R zerops:zerops /var/lib/zerops-k8s
+        - sudo mount --make-rshared /
+      envVariables:
+        K8S_MODE: node
+        K8S_NODE_ROLE: worker
+        K8S_NODE_NAME: k8sworker1
+        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
+        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
+        AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
+        AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
+        AWS_DEFAULT_REGION: us-east-1
+        K8S_IMAGE_STORAGE_ENDPOINT: ${k8sbackups_apiUrl}
+        K8S_IMAGE_STORAGE_BUCKET: ${k8sbackups_bucketName}
+      healthCheck:
+        httpGet:
+          port: 18080
+          path: /healthz
+      start: ./dist/zerops-k8s
+
+  - setup: worker2
+    build:
+      base: go@1.22
+      buildCommands:
+        - mkdir -p dist
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/s3-fetch ./cmd/s3-fetch
+      addToRunPrepare:
+        - ./dist/s3-fetch
+      deployFiles:
+        - .
+    deploy:
+      temporaryShutdown: true
+      readinessCheck:
+        httpGet:
+          port: 18080
+          path: /healthz
+    run:
+      base: docker@26.1.5
+      ports:
+        - port: 18080
+          httpSupport: false
+          protocol: tcp
+      prepareCommands:
+        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+        - cd /home/zerops && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
+      initCommands:
+        - sudo mkdir -p /var/lib/zerops-k8s
+        - sudo chown -R zerops:zerops /var/lib/zerops-k8s
+        - sudo mount --make-rshared /
+      envVariables:
+        K8S_MODE: node
+        K8S_NODE_ROLE: worker
+        K8S_NODE_NAME: k8sworker2
+        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
+        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
+        AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
+        AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
+        AWS_DEFAULT_REGION: us-east-1
+        K8S_IMAGE_STORAGE_ENDPOINT: ${k8sbackups_apiUrl}
+        K8S_IMAGE_STORAGE_BUCKET: ${k8sbackups_bucketName}
+      healthCheck:
+        httpGet:
+          port: 18080
+          path: /healthz
+      start: ./dist/zerops-k8s
+
+  - setup: worker3
+    build:
+      base: go@1.22
+      buildCommands:
+        - mkdir -p dist
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/s3-fetch ./cmd/s3-fetch
+      addToRunPrepare:
+        - ./dist/s3-fetch
+      deployFiles:
+        - .
+    deploy:
+      temporaryShutdown: true
+      readinessCheck:
+        httpGet:
+          port: 18080
+          path: /healthz
+    run:
+      base: docker@26.1.5
+      ports:
+        - port: 18080
+          httpSupport: false
+          protocol: tcp
+      prepareCommands:
+        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+        - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+        - cd /home/zerops && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
+      initCommands:
+        - sudo mkdir -p /var/lib/zerops-k8s
+        - sudo chown -R zerops:zerops /var/lib/zerops-k8s
+        - sudo mount --make-rshared /
+      envVariables:
+        K8S_MODE: node
+        K8S_NODE_ROLE: worker
+        K8S_NODE_NAME: k8sworker3
+        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
+        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
+        AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
+        AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
+        AWS_DEFAULT_REGION: us-east-1
+        K8S_IMAGE_STORAGE_ENDPOINT: ${k8sbackups_apiUrl}
+        K8S_IMAGE_STORAGE_BUCKET: ${k8sbackups_bucketName}
+      healthCheck:
+        httpGet:
+          port: 18080
+          path: /healthz
+      start: ./dist/zerops-k8s
+
+  - setup: edge
+    build:
+      base: go@1.22
+      buildCommands:
+        - mkdir -p dist
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
+      deployFiles:
+        - .
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 18082
+          path: /healthz
+    run:
+      base: go@1.22
+      ports:
+        - port: 8080
+          httpSupport: true
+          protocol: tcp
+        - port: 6443
+          httpSupport: false
+          protocol: tcp
+        - port: 18081
+          httpSupport: false
+          protocol: tcp
+        - port: 18082
+          httpSupport: false
+          protocol: tcp
+      envVariables:
+        K8S_MODE: edge
+      healthCheck:
+        httpGet:
+          port: 18082
+          path: /healthz
+      start: ./dist/zerops-k8s
+
+  # These two setups customize Zerops' first-class Prometheus/Grafana recipe.
+  # They stay outside Kubernetes; the cluster only ships telemetry to them.
+  - setup: prometheus
+    build:
+      base: alpine@3.21
+      deployFiles:
+        - ./observability/prometheus/~
+    deploy:
+      temporaryShutdown: true
+      readinessCheck:
+        httpGet:
+          port: 9090
+          path: /-/ready
+    run:
+      base: alpine@3.21
+      ports:
+        - port: 9090
+          httpSupport: true
+          protocol: tcp
+      prepareCommands:
+        - curl -fsSLo /home/zerops/prometheus.tar.gz https://github.com/prometheus/prometheus/releases/download/v3.13.1/prometheus-3.13.1.linux-amd64.tar.gz
+        - tar -xzf /home/zerops/prometheus.tar.gz -C /home/zerops --strip-components=1 prometheus-3.13.1.linux-amd64/prometheus prometheus-3.13.1.linux-amd64/promtool
+      initCommands:
+        - cp /home/zerops/prometheus /home/zerops/promtool /var/www/
+        - mkdir -p /var/www/data
+        - zsc object-storage restore --storage data_backups --name "${ZEROPS_StackName}-data" --ignore-non-existing /var/www/data
+      envVariables:
+        RETENTION_TIME: 4h
+        BACKUP_COUNT: "4"
+        data_backups_apiUrl: ${prometheusbackups_apiUrl}
+        data_backups_accessKeyId: ${prometheusbackups_accessKeyId}
+        data_backups_secretAccessKey: ${prometheusbackups_secretAccessKey}
+        data_backups_bucketName: ${prometheusbackups_bucketName}
+      crontab:
+        - timing: "0 * * * *"
+          command: curl -fsS -X POST http://localhost:9090/api/v1/admin/tsdb/snapshot && snapshot=$(ls -t /var/www/data/snapshots/ | head -n1) && cd "/var/www/data/snapshots/$snapshot" && zsc object-storage backup --storage data_backups --name "${ZEROPS_StackName}-data" --truncate-count "${BACKUP_COUNT:-4}" ./ && rm -rf "/var/www/data/snapshots/$snapshot"
+          allContainers: false
+      healthCheck:
+        httpGet:
+          port: 9090
+          path: /-/healthy
+      start: ./run-prometheus.sh
+
+  - setup: grafana
+    build:
+      base: alpine@3.21
+      deployFiles:
+        - ./observability/grafana/~
+    deploy:
+      readinessCheck:
+        httpGet:
+          port: 3000
+          path: /api/health
+    run:
+      base: alpine@3.21
+      ports:
+        - port: 3000
+          httpSupport: true
+          protocol: tcp
+      prepareCommands:
+        - curl -fsSLo /home/zerops/grafana.tar.gz https://dl.grafana.com/oss/release/grafana-13.1.0.linux-amd64.tar.gz
+        - tar -xzf /home/zerops/grafana.tar.gz -C /home/zerops --strip-components=1
+      initCommands:
+        - cp -a /home/zerops/. /var/www/
+      envVariables:
+        GF_DATABASE_URL: postgres://${grafanadb_user}:${grafanadb_password}@${grafanadb_hostname}:${grafanadb_port}/${grafanadb_dbName}
+        GF_DATABASE_HIGH_AVAILABILITY: "true"
+        GF_LOG_MODE: syslog
+        GF_AUTH_ANONYMOUS_ENABLED: "false"
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /api/health
+      start: ./run-grafana.sh

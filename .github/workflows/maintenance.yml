@@ -1,0 +1,17 @@
+name: Reconcile Zerops Kubernetes security updates
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    if: github.actor == github.repository_owner || github.event_name == 'schedule'
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      run_full_conformance: false
+    secrets: inherit

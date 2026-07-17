@@ -1,0 +1,212 @@
+fullnameOverride: alloy
+image:
+  tag: v1.17.1
+alloy:
+  enableReporting: false
+  stabilityLevel: generally-available
+  extraEnv:
+    - name: HOST_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.hostIP
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    - name: ELASTIC_APM_SECRET_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: zerops-observability
+          key: elastic-apm-secret-token
+  extraPorts:
+    - {name: otlp-grpc, port: 4317, targetPort: 4317, protocol: TCP, appProtocol: grpc}
+    - {name: otlp-http, port: 4318, targetPort: 4318, protocol: TCP, appProtocol: http}
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 1Gi}
+  configMap:
+    content: |-
+      logging {
+        level  = "info"
+        format = "logfmt"
+      }
+
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      discovery.relabel "pod_metrics" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+          regex         = "true"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+          regex         = "(.+)"
+          target_label  = "__metrics_path__"
+        }
+        rule {
+          source_labels = ["__address__", "__meta_kubernetes_pod_annotation_prometheus_io_port"]
+          regex         = "([^:]+)(?::\\d+)?;(\\d+)"
+          replacement   = "$1:$2"
+          target_label  = "__address__"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_node_name"]
+          target_label  = "node"
+        }
+      }
+
+      discovery.kubernetes "services" {
+        role = "endpoints"
+      }
+
+      discovery.relabel "service_metrics" {
+        targets = discovery.kubernetes.services.targets
+        rule {
+          source_labels = ["__meta_kubernetes_service_annotation_prometheus_io_scrape"]
+          regex         = "true"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_service_annotation_prometheus_io_path"]
+          regex         = "(.+)"
+          target_label  = "__metrics_path__"
+        }
+        rule {
+          source_labels = ["__address__", "__meta_kubernetes_service_annotation_prometheus_io_port"]
+          regex         = "([^:]+)(?::\\d+)?;(\\d+)"
+          replacement   = "$1:$2"
+          target_label  = "__address__"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_service_name"]
+          target_label  = "service"
+        }
+      }
+
+      prometheus.scrape "pods" {
+        targets    = discovery.relabel.pod_metrics.output
+        forward_to = [prometheus.remote_write.zerops.receiver]
+      }
+
+      prometheus.scrape "services" {
+        targets    = discovery.relabel.service_metrics.output
+        forward_to = [prometheus.remote_write.zerops.receiver]
+      }
+
+      prometheus.scrape "kubelet" {
+        targets = [
+          {"__address__" = env("HOST_IP") + ":10250", "instance" = env("NODE_NAME"), "job" = "kubelet"},
+        ]
+        scheme          = "https"
+        metrics_path    = "/metrics"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config { insecure_skip_verify = true }
+        forward_to = [prometheus.remote_write.zerops.receiver]
+      }
+
+      prometheus.scrape "cadvisor" {
+        targets = [
+          {"__address__" = env("HOST_IP") + ":10250", "instance" = env("NODE_NAME"), "job" = "cadvisor"},
+        ]
+        scheme          = "https"
+        metrics_path    = "/metrics/cadvisor"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config { insecure_skip_verify = true }
+        forward_to = [prometheus.remote_write.zerops.receiver]
+      }
+
+      prometheus.scrape "etcd" {
+        targets = [
+          {"__address__" = env("HOST_IP") + ":2381", "instance" = env("NODE_NAME"), "job" = "etcd"},
+        ]
+        forward_to = [prometheus.remote_write.zerops.receiver]
+      }
+
+      prometheus.scrape "alloy" {
+        targets = [{"__address__" = "127.0.0.1:12345", "instance" = env("NODE_NAME"), "job" = "alloy"}]
+        forward_to = [prometheus.remote_write.zerops.receiver]
+      }
+
+      prometheus.remote_write "zerops" {
+        external_labels = {cluster = "zerops-k8s"}
+        endpoint {
+          url = "http://prometheus.zerops:9090/api/v1/write"
+          queue_config {
+            capacity             = 10000
+            max_samples_per_send = 2000
+            min_shards           = 1
+            max_shards           = 8
+          }
+        }
+      }
+
+      otelcol.receiver.otlp "default" {
+        grpc { endpoint = "0.0.0.0:4317" }
+        http { endpoint = "0.0.0.0:4318" }
+        output {
+          traces = [otelcol.processor.k8sattributes.default.input]
+          metrics = [otelcol.processor.k8sattributes.default.input]
+        }
+      }
+
+      otelcol.processor.k8sattributes "default" {
+        extract {
+          metadata = ["k8s.namespace.name", "k8s.pod.name", "k8s.node.name", "k8s.deployment.name"]
+        }
+        output {
+          traces = [otelcol.exporter.otlphttp.elastic.input]
+          metrics = [otelcol.exporter.prometheus.otlp.input]
+        }
+      }
+
+      otelcol.auth.bearer "elastic" {
+        token = env("ELASTIC_APM_SECRET_TOKEN")
+      }
+
+      otelcol.exporter.otlphttp "elastic" {
+        client {
+          endpoint = "http://apmserver.zerops:8200"
+          auth      = otelcol.auth.bearer.elastic.handler
+        }
+      }
+
+      otelcol.exporter.prometheus "otlp" {
+        forward_to = [prometheus.remote_write.zerops.receiver]
+      }
+controller:
+  type: daemonset
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  tolerations:
+    - {operator: Exists}
+rbac:
+  create: true
+  clusterRules:
+    - apiGroups: [""]
+      resources: [nodes, nodes/proxy, nodes/metrics, nodes/stats]
+      verbs: [get, list, watch]
+    - nonResourceURLs: ["/metrics", "/metrics/*"]
+      verbs: [get]
+service:
+  enabled: true
+  type: ClusterIP
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "12345"

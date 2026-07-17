@@ -1,0 +1,21 @@
+name: Deploy Zerops Kubernetes
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_full_conformance:
+        description: Run full CNCF conformance (can take hours)
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.actor == github.repository_owner
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      run_full_conformance: ${{ inputs.run_full_conformance }}
+    secrets: inherit

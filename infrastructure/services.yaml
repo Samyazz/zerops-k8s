@@ -1,0 +1,100 @@
+services:
+  - hostname: k8scp1
+    type: docker@26.1.5
+    startWithoutCode: true
+    verticalAutoscaling:
+      cpuMode: DEDICATED
+      minCpu: 4
+      maxCpu: 4
+      startCpuCoreCount: 4
+      minRam: 8
+      maxRam: 8
+      minDisk: 20
+      maxDisk: 20
+      swapEnabled: false
+  - hostname: k8scp2
+    type: docker@26.1.5
+    startWithoutCode: true
+    verticalAutoscaling:
+      cpuMode: DEDICATED
+      minCpu: 4
+      maxCpu: 4
+      startCpuCoreCount: 4
+      minRam: 8
+      maxRam: 8
+      minDisk: 20
+      maxDisk: 20
+      swapEnabled: false
+  - hostname: k8scp3
+    type: docker@26.1.5
+    startWithoutCode: true
+    verticalAutoscaling:
+      cpuMode: DEDICATED
+      minCpu: 4
+      maxCpu: 4
+      startCpuCoreCount: 4
+      minRam: 8
+      maxRam: 8
+      minDisk: 20
+      maxDisk: 20
+      swapEnabled: false
+  - hostname: k8sworker1
+    type: docker@26.1.5
+    startWithoutCode: true
+    verticalAutoscaling:
+      cpuMode: DEDICATED
+      minCpu: 4
+      maxCpu: 4
+      startCpuCoreCount: 4
+      minRam: 12
+      maxRam: 12
+      minDisk: 50
+      maxDisk: 50
+      swapEnabled: false
+  - hostname: k8sworker2
+    type: docker@26.1.5
+    startWithoutCode: true
+    verticalAutoscaling:
+      cpuMode: DEDICATED
+      minCpu: 4
+      maxCpu: 4
+      startCpuCoreCount: 4
+      minRam: 12
+      maxRam: 12
+      minDisk: 50
+      maxDisk: 50
+      swapEnabled: false
+  - hostname: k8sworker3
+    type: docker@26.1.5
+    startWithoutCode: true
+    verticalAutoscaling:
+      cpuMode: DEDICATED
+      minCpu: 4
+      maxCpu: 4
+      startCpuCoreCount: 4
+      minRam: 12
+      maxRam: 12
+      minDisk: 50
+      maxDisk: 50
+      swapEnabled: false
+  - hostname: k8sedge
+    type: go@1.22
+    startWithoutCode: true
+    enableSubdomainAccess: true
+    minContainers: 2
+    maxContainers: 2
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 2
+      startCpuCoreCount: 1
+      minRam: 0.5
+      maxRam: 1
+      minDisk: 1
+      maxDisk: 2
+      swapEnabled: false
+  - hostname: k8sbackups
+    type: object-storage
+    priority: 10
+    objectStorageSize: 5
+    objectStoragePolicy: private

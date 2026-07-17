@@ -1,0 +1,129 @@
+kind: DaemonSet
+testFramework: {enabled: false}
+hostNetwork: true
+dnsPolicy: ClusterFirstWithHostNet
+rbac:
+  create: true
+  nodeAccess: true
+  eventsAccess: true
+service:
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "2020"
+resources:
+  requests: {cpu: 50m, memory: 96Mi}
+  limits: {cpu: 500m, memory: 384Mi}
+tolerations:
+  - {operator: Exists}
+extraVolumes:
+  - name: journal
+    hostPath: {path: /var/log/journal, type: DirectoryOrCreate}
+  - name: kubernetes-audit
+    hostPath: {path: /var/log/kubernetes/audit, type: DirectoryOrCreate}
+extraVolumeMounts:
+  - {name: journal, mountPath: /var/log/journal, readOnly: true}
+  - {name: kubernetes-audit, mountPath: /var/log/kubernetes/audit, readOnly: true}
+luaScripts:
+  redact.lua: |
+    local sensitive_keys = {
+      authorization=true, proxy_authorization=true, cookie=true, set_cookie=true,
+      token=true, access_token=true, refresh_token=true, password=true, passwd=true,
+      secret=true, client_secret=true, email=true, username=true, user=true,
+      client_ip=true, remote_addr=true, source_ip=true
+    }
+
+    local function scrub_string(value)
+      value = string.gsub(value, "[Bb]earer%s+[%w%._%-]+", "Bearer [REDACTED]")
+      value = string.gsub(value, "[%w%._%%+%-]+@[%w%.%-]+%.[%a]+", "[REDACTED_EMAIL]")
+      value = string.gsub(value, "%f[%d]%d+%.%d+%.%d+%.%d+%f[%D]", "[REDACTED_IP]")
+      value = string.gsub(value, "eyJ[%w_%-]+%.[%w_%-]+%.[%w_%-]+", "[REDACTED_JWT]")
+      return value
+    end
+
+    local function scrub(value, key)
+      if key and sensitive_keys[string.lower(tostring(key))] then
+        return "[REDACTED]"
+      end
+      if type(value) == "string" then return scrub_string(value) end
+      if type(value) == "table" then
+        for child_key, child_value in pairs(value) do
+          value[child_key] = scrub(child_value, child_key)
+        end
+      end
+      return value
+    end
+
+    function redact(tag, timestamp, record)
+      record = scrub(record, nil)
+      if record["log"] == nil then
+        local message = record["message"] or record["requestURI"] or record["MESSAGE"] or "structured kubernetes event"
+        record["log"] = scrub_string(tostring(message))
+      end
+      return 1, timestamp, record
+    end
+config:
+  service: |
+    [SERVICE]
+        Daemon Off
+        Flush 1
+        Log_Level info
+        Parsers_File /fluent-bit/etc/parsers.conf
+        Parsers_File /fluent-bit/etc/conf/custom_parsers.conf
+        HTTP_Server On
+        HTTP_Listen 0.0.0.0
+        HTTP_Port 2020
+        Health_Check On
+  inputs: |
+    [INPUT]
+        Name tail
+        Path /var/log/containers/*.log
+        multiline.parser docker, cri
+        Tag kube.*
+        Mem_Buf_Limit 20MB
+        Skip_Long_Lines On
+        DB /var/log/flb-containers.db
+
+    [INPUT]
+        Name tail
+        Path /var/log/kubernetes/audit/audit.log
+        Parser json
+        Tag audit.*
+        Mem_Buf_Limit 20MB
+        Skip_Long_Lines On
+        DB /var/log/flb-audit.db
+
+    [INPUT]
+        Name systemd
+        Path /var/log/journal
+        Tag journal.*
+        Read_From_Tail On
+        Strip_Underscores On
+  filters: |
+    [FILTER]
+        Name kubernetes
+        Match kube.*
+        Merge_Log On
+        Keep_Log On
+        K8S-Logging.Parser On
+        K8S-Logging.Exclude On
+
+    [FILTER]
+        Name lua
+        Match *
+        script /fluent-bit/scripts/redact.lua
+        call redact
+  outputs: |
+    [OUTPUT]
+        Name syslog
+        Match *
+        Host logstash.zerops
+        Port 1514
+        Mode tcp
+        Syslog_Format rfc5424
+        Syslog_Message_Key log
+        Syslog_Appname_Key app
+        Retry_Limit False
+  customParsers: |
+    [PARSER]
+        Name json
+        Format json

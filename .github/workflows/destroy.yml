@@ -1,0 +1,35 @@
+name: Destroy Zerops Kubernetes
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zerops-k8s-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  destroy:
+    if: github.actor == github.repository_owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Install pinned tools
+        shell: bash
+        run: ./scripts/install-tools.sh
+      - name: Destroy the repository-managed cluster
+        shell: bash
+        run: |
+          zcli login "$ZEROPS_TOKEN"
+          zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect
+          trap 'zcli vpn down >/dev/null 2>&1 || true' EXIT
+          ./scripts/destroy-cluster.sh

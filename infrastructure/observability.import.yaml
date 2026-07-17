@@ -1,0 +1,47 @@
+#zeropsPreprocessor=on
+services:
+  - hostname: grafanadb
+    type: postgresql:single@17
+    profile: oltp-hobby
+    priority: 10
+  - hostname: prometheusbackups
+    type: object-storage
+    priority: 10
+    objectStorageSize: 5
+    objectStoragePolicy: private
+  - hostname: grafana
+    type: alpine@3.21
+    startWithoutCode: true
+    enableSubdomainAccess: true
+    envSecrets:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: <@generateRandomString(<32>)>
+      GF_SECURITY_SECRET_KEY: <@generateRandomString(<32>)>
+  - hostname: prometheus
+    type: alpine@3.21
+    startWithoutCode: true
+    enableSubdomainAccess: true
+    maxContainers: 1
+  - hostname: elkstorage
+    type: elasticsearch:single@8.16
+    priority: 10
+  - hostname: kibana
+    type: ubuntu@24.04
+    buildFromGit: https://github.com/zeropsio/recipe-elk@main
+    zeropsSetup: kibana
+    enableSubdomainAccess: true
+    maxContainers: 1
+    verticalAutoscaling: {minRam: 1, maxRam: 4}
+  - hostname: logstash
+    type: ubuntu@24.04
+    buildFromGit: https://github.com/zeropsio/recipe-elk@main
+    zeropsSetup: logstash
+    maxContainers: 1
+    verticalAutoscaling: {minRam: 1, maxRam: 4}
+  - hostname: apmserver
+    type: ubuntu@24.04
+    buildFromGit: https://github.com/zeropsio/recipe-elk@main
+    zeropsSetup: apmserver
+    maxContainers: 1
+    envSecrets:
+      SECRET_TOKEN: <@generateRandomString(<32>)>
