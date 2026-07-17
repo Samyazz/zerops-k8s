@@ -25,7 +25,7 @@ zerops:
       prepareCommands:
         - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
         - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - cd /home/zerops && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
+        - cd /home/zerops && sed -i 's#  .*#  node-image.tar.gz#' node-image.tar.gz.sha256 && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
       initCommands:
         - sudo mkdir -p /var/lib/zerops-k8s
         - sudo chown -R zerops:zerops /var/lib/zerops-k8s
@@ -71,7 +71,7 @@ zerops:
       prepareCommands:
         - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
         - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - cd /home/zerops && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
+        - cd /home/zerops && sed -i 's#  .*#  node-image.tar.gz#' node-image.tar.gz.sha256 && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
       initCommands:
         - sudo mkdir -p /var/lib/zerops-k8s
         - sudo chown -R zerops:zerops /var/lib/zerops-k8s
@@ -121,7 +121,7 @@ zerops:
       prepareCommands:
         - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
         - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - cd /home/zerops && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
+        - cd /home/zerops && sed -i 's#  .*#  node-image.tar.gz#' node-image.tar.gz.sha256 && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
       initCommands:
         - sudo mkdir -p /var/lib/zerops-k8s
         - sudo chown -R zerops:zerops /var/lib/zerops-k8s
@@ -171,7 +171,7 @@ zerops:
       prepareCommands:
         - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
         - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - cd /home/zerops && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
+        - cd /home/zerops && sed -i 's#  .*#  node-image.tar.gz#' node-image.tar.gz.sha256 && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
       initCommands:
         - sudo mkdir -p /var/lib/zerops-k8s
         - sudo chown -R zerops:zerops /var/lib/zerops-k8s
@@ -219,7 +219,7 @@ zerops:
       prepareCommands:
         - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
         - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - cd /home/zerops && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
+        - cd /home/zerops && sed -i 's#  .*#  node-image.tar.gz#' node-image.tar.gz.sha256 && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
       initCommands:
         - sudo mkdir -p /var/lib/zerops-k8s
         - sudo chown -R zerops:zerops /var/lib/zerops-k8s
@@ -267,7 +267,7 @@ zerops:
       prepareCommands:
         - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
         - ./dist/s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
-        - cd /home/zerops && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
+        - cd /home/zerops && sed -i 's#  .*#  node-image.tar.gz#' node-image.tar.gz.sha256 && sha256sum -c node-image.tar.gz.sha256 && docker image load -i node-image.tar.gz && rm -f node-image.tar.gz node-image.tar.gz.sha256
       initCommands:
         - sudo mkdir -p /var/lib/zerops-k8s
         - sudo chown -R zerops:zerops /var/lib/zerops-k8s

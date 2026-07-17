@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/xml"
 	"errors"
 	"flag"
 	"fmt"
@@ -26,6 +27,14 @@ type config struct {
 	AccessKey string
 	SecretKey string
 	Region    string
+}
+
+type regionError struct {
+	Region string
+}
+
+func (e *regionError) Error() string {
+	return "S3 endpoint requires signing region " + e.Region
 }
 
 func main() {
@@ -61,6 +70,11 @@ func download(cfg config) error {
 			return nil
 		} else {
 			lastErr = err
+			var wrongRegion *regionError
+			if errors.As(err, &wrongRegion) {
+				cfg.Region = wrongRegion.Region
+				continue
+			}
 		}
 		if attempt < 3 {
 			time.Sleep(time.Duration(attempt*2) * time.Second)
@@ -100,6 +114,13 @@ func fetchOnce(client *http.Client, u *url.URL, cfg config, now time.Time) error
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		message, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		var s3err struct {
+			Code   string `xml:"Code"`
+			Region string `xml:"Region"`
+		}
+		if xml.Unmarshal(message, &s3err) == nil && s3err.Code == "AuthorizationHeaderMalformed" && s3err.Region != "" {
+			return &regionError{Region: s3err.Region}
+		}
 		return fmt.Errorf("download object: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(message)))
 	}
 
