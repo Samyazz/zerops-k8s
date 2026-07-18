@@ -12,6 +12,8 @@ Check the corresponding Zerops service build/runtime events and logs. The agent 
 
 Check `http://k8sedge:18082/healthz`, then each control plane's agent state. The kubeconfig server must be `https://k8sedge:6443` and the Zerops VPN must be active. Never bypass TLS verification for routine access.
 
+The workflows connect with `zcli vpn up --mtu 1280`. If a manual VPN connection can transfer small health responses but stalls on kubeconfig or other larger responses, reconnect with the same MTU instead of the default 1420.
+
 ## Node is NotReady
 
 Inspect conditions and system pods:

@@ -46,7 +46,7 @@ set_cluster_state deploying "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
 "$ROOT_DIR/scripts/provision-observability.sh"
 "$ROOT_DIR/scripts/build-and-deploy.sh"
 
-zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect
+zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
 vpn_connected=true
 cluster_touched=true
 

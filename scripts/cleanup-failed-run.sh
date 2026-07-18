@@ -15,6 +15,6 @@ if [[ "$state" != deploying || "${repository,,}" != "${GITHUB_REPOSITORY,,}" || 
   exit 0
 fi
 
-zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect
+zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
 trap 'zcli vpn down >/dev/null 2>&1 || true' EXIT
 "$ROOT_DIR/scripts/destroy-cluster.sh"
