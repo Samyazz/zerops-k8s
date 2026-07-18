@@ -45,6 +45,7 @@ load_zerops_env() {
 agent_request() {
   local node=$1 method=$2 path=$3 data=${4:-}
   local args=(--fail --silent --show-error --connect-timeout 10 --max-time 1200
+    --retry 5 --retry-delay 2 --retry-max-time 90 --retry-all-errors
     -X "$method" -H "Authorization: Bearer $K8S_AGENT_TOKEN")
   if [[ -n "$data" ]]; then
     args+=(-H 'Content-Type: application/json' --data "$data")
