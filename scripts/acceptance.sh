@@ -291,7 +291,15 @@ curl --fail --silent http://grafana.zerops:3000/api/health | tee "$artifact_dir/
 curl --fail --silent http://kibana.zerops:5601/api/status | jq '{status:.status.overall.level}' | tee "$artifact_dir/kibana-health.json"
 
 log 'running report-only security scans'
-kubescape scan framework nsa,mitre,cis-v1.10.0 --format json --output "$artifact_dir/kubescape.json" || true
+kubectl -n workloads delete pod/telemetry-proof --ignore-not-found --wait=true >/dev/null
+kubescape_raw=${RUNNER_TEMP:-$ROOT_DIR/artifacts}/kubescape-raw.json
+kubescape scan framework nsa,mitre,cis-v1.10.0 --format json --output "$kubescape_raw" || true
+if [[ -s "$kubescape_raw" ]]; then
+  jq 'del(.resources)' "$kubescape_raw" > "$artifact_dir/kubescape.json"
+else
+  jq -n '{scanStatus:"report unavailable"}' > "$artifact_dir/kubescape.json"
+fi
+rm -f "$kubescape_raw"
 
 if [[ "${RUN_FULL_CONFORMANCE:-true}" == true ]]; then
   log 'running full CNCF certified-conformance suite; this can take several hours'
@@ -303,6 +311,7 @@ if [[ "${RUN_FULL_CONFORMANCE:-true}" == true ]]; then
   sonobuoy results "$result" | tee "$artifact_dir/sonobuoy-results.txt"
   sonobuoy results "$result" --mode=detailed | tee "$artifact_dir/sonobuoy-detailed.txt"
   grep -q 'Status: passed' "$artifact_dir/sonobuoy-results.txt" || die 'CNCF conformance suite did not pass'
+  rm -f "$result"
   sonobuoy delete >/dev/null 2>&1 || true
 fi
 
