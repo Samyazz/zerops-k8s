@@ -95,6 +95,8 @@ helm upgrade --install longhorn longhorn/longhorn --version "$LONGHORN_VERSION" 
   --set defaultSettings.createDefaultDiskLabeledNodes=true \
   --wait --timeout 20m
 kubectl label namespace longhorn-system pod-security.kubernetes.io/enforce=privileged --overwrite
+kubectl -n longhorn-system annotate service longhorn-backend \
+  prometheus.io/scrape='true' prometheus.io/port='9500' --overwrite
 
 helm repo add jetstack https://charts.jetstack.io --force-update >/dev/null
 helm upgrade --install cert-manager jetstack/cert-manager --version "v${CERT_MANAGER_VERSION}" \

@@ -52,15 +52,25 @@ groups:
         labels: {severity: warning}
         annotations: {summary: "Cluster memory requests exceed allocatable memory"}
       - alert: KubeAPIDown
-        expr: absent(up{job=~".*apiserver.*"} == 1)
+        expr: count(up{job="apiserver"} == 1) < 3
         for: 5m
         labels: {severity: critical}
-        annotations: {summary: "Kubernetes API metrics are unavailable"}
+        annotations: {summary: "One or more Kubernetes API servers are unavailable"}
       - alert: EtcdMembersDown
-        expr: max(etcd_server_has_leader) == 0 or sum(up{job=~".*etcd.*"} == 0) > 0
+        expr: count(up{job="etcd"} == 1) < 3 or max(etcd_server_has_leader) == 0
         for: 3m
         labels: {severity: critical}
         annotations: {summary: "One or more etcd members are unhealthy"}
+      - alert: KubeControllerManagerDown
+        expr: count(up{job="controller-manager"} == 1) < 3
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "One or more Kubernetes controller managers are unavailable"}
+      - alert: KubeSchedulerDown
+        expr: count(up{job="scheduler"} == 1) < 3
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "One or more Kubernetes schedulers are unavailable"}
       - alert: CertificateExpiringSoon
         expr: apiserver_client_certificate_expiration_seconds_count{le="604800"} > 0
         for: 15m

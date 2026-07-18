@@ -47,6 +47,37 @@ wait_all_workload_pods_ready() {
   die 'not all non-job Pods became Running and Ready within 15 minutes'
 }
 
+wait_metric() {
+  local check=$1 operator=$2 expected=$3 query=$4 attempt response observed
+  for attempt in {1..60}; do
+    response=$(curl --fail --silent --get --data-urlencode "query=$query" \
+      http://prometheus.zerops:9090/api/v1/query || true)
+    observed=$(jq -er '.data.result[0].value[1]' <<<"$response" 2>/dev/null || true)
+    if [[ -n "$observed" ]]; then
+      if [[ "$operator" == eq ]] \
+        && jq -en --argjson actual "$observed" --argjson expected "$expected" \
+          '$actual == $expected' >/dev/null; then
+        jq -cn --arg check "$check" --arg operator "$operator" --argjson expected "$expected" \
+          --argjson observed "$observed" --arg query "$query" \
+          '{check:$check,operator:$operator,expected:$expected,observed:$observed,query:$query}' \
+          >> "$metric_evidence"
+        return 0
+      fi
+      if [[ "$operator" == ge ]] \
+        && jq -en --argjson actual "$observed" --argjson expected "$expected" \
+          '$actual >= $expected' >/dev/null; then
+        jq -cn --arg check "$check" --arg operator "$operator" --argjson expected "$expected" \
+          --argjson observed "$observed" --arg query "$query" \
+          '{check:$check,operator:$operator,expected:$expected,observed:$observed,query:$query}' \
+          >> "$metric_evidence"
+        return 0
+      fi
+    fi
+    (( attempt < 60 )) || die "fresh metric check failed: $check ($operator $expected, observed ${observed:-none})"
+    sleep 10
+  done
+}
+
 load_zerops_env
 require_env K8S_AGENT_TOKEN ELASTICSEARCH_PASSWORD
 
@@ -130,6 +161,10 @@ fi
 
 log 'proving fresh telemetry ingestion'
 marker="zerops-telemetry-${GITHUB_RUN_ID:-local}-$(date +%s)"
+synthetic_token="proof-token-${GITHUB_RUN_ID:-local}-$(date +%s)-secret"
+synthetic_email="proof-${GITHUB_RUN_ID:-local}@example.invalid"
+synthetic_ip='203.0.113.47'
+audit_marker="zerops-audit-${GITHUB_RUN_ID:-local}-$(date +%s)"
 kubectl -n workloads delete pod telemetry-proof --ignore-not-found --wait=true >/dev/null
 cat <<YAML | kubectl apply -f -
 apiVersion: v1
@@ -142,32 +177,112 @@ spec:
   containers:
     - name: proof
       image: busybox:1.37.0
-      command: [sh, -c, "echo $marker; sleep 30"]
+      command: [sh, -c, "echo '$marker Authorization: Bearer $synthetic_token email=$synthetic_email client_ip=$synthetic_ip'; sleep 30"]
       securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true, runAsNonRoot: true, runAsUser: 65532}
       resources: {requests: {cpu: 5m, memory: 8Mi}, limits: {cpu: 50m, memory: 32Mi}}
 YAML
 kubectl -n workloads wait pod/telemetry-proof --for=condition=Ready --timeout=3m
 for _ in {1..50}; do curl --fail --silent http://k8sedge:8080/hostname >/dev/null; done
+audit_selector=$(jq -rn --arg value "zerops-audit-marker=$audit_marker" '$value | @uri')
+kubectl get --raw="/api/v1/namespaces?labelSelector=$audit_selector" >/dev/null
 
-for attempt in {1..60}; do
-  if curl --fail --silent --get --data-urlencode 'query=count(kube_node_info)' http://prometheus.zerops:9090/api/v1/query \
-    | tee "$artifact_dir/prometheus-proof.json" | jq -e '.data.result[0].value[1] | tonumber >= 6' >/dev/null; then break; fi
-  (( attempt < 60 )) || die 'fresh Kubernetes metrics were not found in Zerops Prometheus'
-  sleep 10
-done
+metric_evidence="$artifact_dir/prometheus-proof.ndjson"
+: > "$metric_evidence"
+wait_metric nodes eq 6 'count(max by (exported_node) (timestamp(kube_node_info)) > time() - 120)'
+wait_metric kubelet eq 6 'count(timestamp(up{job="kubelet"} == 1) > time() - 120)'
+wait_metric cadvisor eq 6 'count(timestamp(up{job="cadvisor"} == 1) > time() - 120)'
+wait_metric etcd eq 3 'count(timestamp(up{job="etcd"} == 1) > time() - 120)'
+wait_metric apiserver eq 3 'count(timestamp(up{job="apiserver"} == 1) > time() - 120)'
+wait_metric controller_manager eq 3 'count(timestamp(up{job="controller-manager"} == 1) > time() - 120)'
+wait_metric scheduler eq 3 'count(timestamp(up{job="scheduler"} == 1) > time() - 120)'
+wait_metric kube_proxy eq 6 'count(timestamp(up{job="kube-proxy"} == 1) > time() - 120)'
+wait_metric calico ge 9 'count(timestamp(up{job="prometheus.scrape.pods",namespace="calico-system"} == 1) > time() - 120)'
+wait_metric istio_system ge 13 'count(timestamp(up{job="prometheus.scrape.pods",namespace="istio-system"} == 1) > time() - 120)'
+wait_metric istio_ingress ge 2 'count(timestamp(up{job="prometheus.scrape.pods",namespace="istio-ingress"} == 1) > time() - 120)'
+wait_metric cert_manager ge 3 'count(timestamp(up{job="prometheus.scrape.pods",namespace="cert-manager"} == 1) > time() - 120)'
+wait_metric node_exporter eq 6 'count(timestamp(up{job="prometheus.scrape.services",namespace="observability",service="node-exporter-prometheus-node-exporter"} == 1) > time() - 120)'
+wait_metric kube_state_metrics eq 1 'count(timestamp(up{job="prometheus.scrape.services",namespace="observability",service="kube-state-metrics"} == 1) > time() - 120)'
+wait_metric alloy eq 6 'count(timestamp(up{job="prometheus.scrape.services",namespace="observability",service="alloy"} == 1) > time() - 120)'
+wait_metric fluent_bit eq 6 'count(timestamp(up{job="prometheus.scrape.pods",namespace="observability",pod=~"fluent-bit-.*"} == 1) > time() - 120)'
+wait_metric longhorn ge 3 'count(timestamp(up{job="prometheus.scrape.services",namespace="longhorn-system",service="longhorn-backend"} == 1) > time() - 120)'
+jq -s '.' "$metric_evidence" > "$artifact_dir/prometheus-proof.json"
+rm -f "$metric_evidence"
 
+log_query=$(jq -cn --arg marker "$marker" '{
+  size:20,
+  sort:[{"@timestamp":{order:"desc"}}],
+  query:{bool:{filter:[
+    {range:{"@timestamp":{gte:"now-10m"}}},
+    {match:{message:{query:$marker,operator:"and"}}}
+  ]}}
+}')
 for attempt in {1..60}; do
-  if curl --fail --silent -u "elastic:$ELASTICSEARCH_PASSWORD" \
-    --get --data-urlencode "q=$marker" 'http://elkstorage.zerops:9200/_search' \
-    | tee "$artifact_dir/elk-proof.json" | jq -e '.hits.total.value > 0' >/dev/null; then break; fi
+  log_response=$(curl --fail --silent -u "elastic:$ELASTICSEARCH_PASSWORD" \
+    -H 'Content-Type: application/json' --data "$log_query" \
+    'http://elkstorage.zerops:9200/_search' || true)
+  if jq -e --arg token "$synthetic_token" --arg email "$synthetic_email" --arg ip "$synthetic_ip" '
+    (.hits.total.value > 0)
+    and ([.hits.hits[]._source | tostring | contains($token)] | any | not)
+    and ([.hits.hits[]._source | tostring | contains($email)] | any | not)
+    and ([.hits.hits[]._source | tostring | contains($ip)] | any | not)
+    and ([.hits.hits[]._source | tostring | contains("[REDACTED")] | any)
+  ' <<<"$log_response" >/dev/null 2>&1; then
+    log_hits=$(jq -r '.hits.total.value' <<<"$log_response")
+    log_latest=$(jq -r '.hits.hits[0]._source["@timestamp"] // ""' <<<"$log_response")
+    jq -n --arg marker "$marker" --argjson hits "$log_hits" --arg latest "$log_latest" \
+      '{marker:$marker,hits:$hits,latestTimestamp:$latest,redactionVerified:true,window:"10m"}' \
+      > "$artifact_dir/elk-proof.json"
+    break
+  fi
   (( attempt < 60 )) || die 'fresh redacted Kubernetes log was not found in Zerops ELK'
   sleep 10
 done
 
+audit_query=$(jq -cn --arg marker "$audit_marker" '{
+  size:20,
+  sort:[{"@timestamp":{order:"desc"}}],
+  query:{bool:{filter:[
+    {range:{"@timestamp":{gte:"now-10m"}}},
+    {match:{message:{query:$marker,operator:"and"}}}
+  ]}}
+}')
 for attempt in {1..60}; do
-  if curl --fail --silent -u "elastic:$ELASTICSEARCH_PASSWORD" \
-    --get --data-urlencode 'q=processor.event:transaction OR processor.event:span' 'http://elkstorage.zerops:9200/traces-*/_search' \
-    | tee "$artifact_dir/trace-proof.json" | jq -e '.hits.total.value > 0' >/dev/null; then break; fi
+  audit_response=$(curl --fail --silent -u "elastic:$ELASTICSEARCH_PASSWORD" \
+    -H 'Content-Type: application/json' --data "$audit_query" \
+    'http://elkstorage.zerops:9200/_search' || true)
+  if jq -e '.hits.total.value > 0' <<<"$audit_response" >/dev/null 2>&1; then
+    audit_hits=$(jq -r '.hits.total.value' <<<"$audit_response")
+    audit_latest=$(jq -r '.hits.hits[0]._source["@timestamp"] // ""' <<<"$audit_response")
+    jq -n --arg marker "$audit_marker" --argjson hits "$audit_hits" --arg latest "$audit_latest" \
+      '{marker:$marker,hits:$hits,latestTimestamp:$latest,window:"10m"}' \
+      > "$artifact_dir/audit-proof.json"
+    break
+  fi
+  (( attempt < 60 )) || die 'fresh Kubernetes audit event was not found in Zerops ELK'
+  sleep 10
+done
+
+trace_query=$(jq -cn '{
+  size:20,
+  sort:[{"@timestamp":{order:"desc"}}],
+  query:{bool:{filter:[
+    {range:{"@timestamp":{gte:"now-10m"}}},
+    {terms:{"processor.event":["transaction","span"]}},
+    {term:{"service.name":"public-gateway-istio_istio-ingress"}}
+  ]}}
+}')
+for attempt in {1..60}; do
+  trace_response=$(curl --fail --silent -u "elastic:$ELASTICSEARCH_PASSWORD" \
+    -H 'Content-Type: application/json' --data "$trace_query" \
+    'http://elkstorage.zerops:9200/traces-*/_search' || true)
+  if jq -e '.hits.total.value > 0' <<<"$trace_response" >/dev/null 2>&1; then
+    trace_hits=$(jq -r '.hits.total.value' <<<"$trace_response")
+    trace_latest=$(jq -r '.hits.hits[0]._source["@timestamp"] // ""' <<<"$trace_response")
+    jq -n --argjson hits "$trace_hits" --arg latest "$trace_latest" \
+      '{serviceName:"public-gateway-istio_istio-ingress",hits:$hits,latestTimestamp:$latest,window:"10m"}' \
+      > "$artifact_dir/trace-proof.json"
+    break
+  fi
   (( attempt < 60 )) || die 'fresh trace was not found in Zerops APM/ELK'
   sleep 10
 done

@@ -12,6 +12,6 @@ The Kubernetes API certificate includes the edge hostname. kubeadm uses a non-ex
 
 Calico is the only Kubernetes network provider. Istio ambient adds encrypted workload identity without sidecars. The application `Gateway` is produced by Istio's Gateway API controller as a two-replica NodePort gateway; the outer edge keeps it VPN-only by default.
 
-Alloy runs once per node, scrapes the kubelet, cAdvisor, etcd where present, annotated pods/services, Calico, Istio, cert-manager, node-exporter, and kube-state-metrics, then remote-writes to the outer Zerops Prometheus service. OTLP traces go through Alloy to Zerops APM/Elasticsearch. Fluent Bit reads pod, audit, and journal logs, applies recursive redaction, and sends RFC5424 syslog to the outer Zerops Logstash service.
+Alloy runs once per node and scrapes the API server, controller-manager, scheduler, kube-proxy, kubelet, cAdvisor, etcd where present, annotated pods/services, Calico, Istio, cert-manager, Longhorn, Fluent Bit, node-exporter, and kube-state-metrics. It remote-writes all metrics to the outer Zerops Prometheus service. OTLP traces go through Alloy to Zerops APM/Elasticsearch. Fluent Bit reads pod, audit, and journal logs, applies recursive redaction, and sends RFC5424 syslog to the outer Zerops Logstash service.
 
 Longhorn uses worker disks below `/var/lib/longhorn`, with three replicas. The control plane is stacked etcd across all three control-plane nodes.

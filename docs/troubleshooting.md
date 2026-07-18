@@ -36,4 +36,4 @@ Ensure all workers are Ready, `iscsid` is active, mount propagation is shared, a
 - Logs: inspect Fluent Bit, resolve `logstash.zerops`, and check Logstash TCP port 1514.
 - Traces: confirm the `zerops-observability` Kubernetes Secret exists, the Istio Telemetry provider is `zerops-otlp`, and APM Server is healthy.
 
-The acceptance workflow makes a fresh signal and queries each backend, so its one-day evidence artifact is the best first diagnostic bundle.
+The acceptance workflow checks a two-minute freshness window for every Kubernetes metric family, emits a synthetic log containing token, email, and IP patterns, proves those values were redacted, generates a uniquely identifiable audit event, and requires a recent Istio trace. Its one-day sanitized evidence artifact is the best first diagnostic bundle.

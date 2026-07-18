@@ -40,7 +40,7 @@ alloy:
 
         rule {
           source_labels = ["__meta_kubernetes_pod_node_name"]
-          regex         = env("NODE_NAME")
+          regex         = sys.env("NODE_NAME")
           action        = "keep"
         }
         rule {
@@ -81,7 +81,7 @@ alloy:
         targets = discovery.kubernetes.services.targets
         rule {
           source_labels = ["__meta_kubernetes_endpoint_node_name"]
-          regex         = env("NODE_NAME")
+          regex         = sys.env("NODE_NAME")
           action        = "keep"
         }
         rule {
@@ -126,7 +126,7 @@ alloy:
 
       prometheus.scrape "kubelet" {
         targets = [
-          {"__address__" = env("HOST_IP") + ":10250", "instance" = env("NODE_NAME"), "job" = "kubelet"},
+          {"__address__" = sys.env("HOST_IP") + ":10250", "instance" = sys.env("NODE_NAME"), "job" = "kubelet"},
         ]
         scheme          = "https"
         metrics_path    = "/metrics"
@@ -137,7 +137,7 @@ alloy:
 
       prometheus.scrape "cadvisor" {
         targets = [
-          {"__address__" = env("HOST_IP") + ":10250", "instance" = env("NODE_NAME"), "job" = "cadvisor"},
+          {"__address__" = sys.env("HOST_IP") + ":10250", "instance" = sys.env("NODE_NAME"), "job" = "cadvisor"},
         ]
         scheme          = "https"
         metrics_path    = "/metrics/cadvisor"
@@ -148,13 +148,53 @@ alloy:
 
       prometheus.scrape "etcd" {
         targets = [
-          {"__address__" = env("HOST_IP") + ":2381", "instance" = env("NODE_NAME"), "job" = "etcd"},
+          {"__address__" = sys.env("HOST_IP") + ":2381", "instance" = sys.env("NODE_NAME"), "job" = "etcd"},
+        ]
+        forward_to = [prometheus.remote_write.zerops.receiver]
+      }
+
+      prometheus.scrape "apiserver" {
+        targets = [
+          {"__address__" = "127.0.0.1:6443", "instance" = sys.env("NODE_NAME"), "job" = "apiserver"},
+        ]
+        scheme            = "https"
+        metrics_path      = "/metrics"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config { insecure_skip_verify = true }
+        forward_to = [prometheus.remote_write.zerops.receiver]
+      }
+
+      prometheus.scrape "controller_manager" {
+        targets = [
+          {"__address__" = "127.0.0.1:10257", "instance" = sys.env("NODE_NAME"), "job" = "controller-manager"},
+        ]
+        scheme            = "https"
+        metrics_path      = "/metrics"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config { insecure_skip_verify = true }
+        forward_to = [prometheus.remote_write.zerops.receiver]
+      }
+
+      prometheus.scrape "scheduler" {
+        targets = [
+          {"__address__" = "127.0.0.1:10259", "instance" = sys.env("NODE_NAME"), "job" = "scheduler"},
+        ]
+        scheme            = "https"
+        metrics_path      = "/metrics"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config { insecure_skip_verify = true }
+        forward_to = [prometheus.remote_write.zerops.receiver]
+      }
+
+      prometheus.scrape "kube_proxy" {
+        targets = [
+          {"__address__" = "127.0.0.1:10249", "instance" = sys.env("NODE_NAME"), "job" = "kube-proxy"},
         ]
         forward_to = [prometheus.remote_write.zerops.receiver]
       }
 
       prometheus.scrape "alloy" {
-        targets = [{"__address__" = "127.0.0.1:12345", "instance" = env("NODE_NAME"), "job" = "alloy"}]
+        targets = [{"__address__" = "127.0.0.1:12345", "instance" = sys.env("NODE_NAME"), "job" = "alloy"}]
         forward_to = [prometheus.remote_write.zerops.receiver]
       }
 
@@ -191,7 +231,7 @@ alloy:
       }
 
       otelcol.auth.bearer "elastic" {
-        token = env("ELASTIC_APM_SECRET_TOKEN")
+        token = sys.env("ELASTIC_APM_SECRET_TOKEN")
       }
 
       otelcol.exporter.otlphttp "elastic" {

@@ -2,6 +2,9 @@ kind: DaemonSet
 testFramework: {enabled: false}
 hostNetwork: true
 dnsPolicy: ClusterFirstWithHostNet
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "2020"
 rbac:
   create: true
   nodeAccess: true
