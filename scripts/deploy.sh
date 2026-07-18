@@ -20,6 +20,9 @@ finish() {
 }
 trap finish EXIT INT TERM
 
+shellcheck "$ROOT_DIR"/scripts/*.sh
+(cd "$ROOT_DIR" && go test ./... && go vet ./...)
+"$ROOT_DIR/scripts/validate-recipe.sh"
 load_zerops_env
 require_env K8S_AGENT_TOKEN K8S_BOOTSTRAP_TOKEN K8S_CERTIFICATE_KEY K8S_ENCRYPTION_KEY
 project_state=$(cluster_tag_value state)
@@ -29,6 +32,13 @@ if [[ "$project_state" == cleanup-failed ]]; then
 fi
 if [[ -n "$project_repository" && "$project_repository" != unknown && "${project_repository,,}" != "${GITHUB_REPOSITORY,,}" ]]; then
   die "this project is already managed by $project_repository"
+fi
+
+if [[ "$project_state" == running ]]; then
+  export RECONCILE_EXISTING=true
+  log 'existing repository-managed cluster detected; reconciling it in place'
+else
+  export RECONCILE_EXISTING=false
 fi
 
 set_cluster_state deploying "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
@@ -44,6 +54,7 @@ cluster_touched=true
 "$ROOT_DIR/scripts/configure-retention.sh"
 "$ROOT_DIR/scripts/acceptance.sh"
 "$ROOT_DIR/scripts/store-credentials.sh"
+set_cluster_state running "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
 
 success=true
 log 'clean-room deployment completed; the validated cluster remains running'

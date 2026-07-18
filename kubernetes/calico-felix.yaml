@@ -1,0 +1,8 @@
+apiVersion: projectcalico.org/v3
+kind: FelixConfiguration
+metadata:
+  name: default
+spec:
+  # Istio ambient captures service traffic itself; Calico connect-time BPF
+  # load balancing would bypass that capture path.
+  bpfConnectTimeLoadBalancing: Disabled

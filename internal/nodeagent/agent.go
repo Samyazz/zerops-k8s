@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -118,10 +119,13 @@ func (a *agent) startNodeLocked(ctx context.Context) error {
 	state, _ := a.containerState(ctx)
 	switch state {
 	case "running":
-		return nil
+		return a.ensureNestedNodeReady(ctx, false)
 	case "stopped":
-		_, err := a.runner.run(ctx, "docker", []string{"start", a.cfg.ContainerName}, "")
-		return err
+		a.terminateOrphanedPodProcesses(ctx)
+		if _, err := a.runner.run(ctx, "docker", []string{"start", a.cfg.ContainerName}, ""); err != nil {
+			return err
+		}
+		return a.ensureNestedNodeReady(ctx, true)
 	}
 	if err := a.ensureNodeImage(ctx); err != nil {
 		return err
@@ -133,7 +137,7 @@ func (a *agent) startNodeLocked(ctx context.Context) error {
 		"--security-opt", "seccomp=unconfined",
 		"--restart=unless-stopped", "--stop-signal=SIGRTMIN+3",
 		"--tmpfs", "/run", "--tmpfs", "/run/lock",
-		"--volume", "/sys/fs/cgroup:/sys/fs/cgroup:rw",
+		"--volume", "/sys:/sys:rshared",
 		"--volume", "/lib/modules:/lib/modules:ro",
 		"--volume", "/dev:/dev",
 		"--volume", a.path("etc-kubernetes") + ":/etc/kubernetes",
@@ -152,12 +156,70 @@ func (a *agent) startNodeLocked(ctx context.Context) error {
 	if _, err := a.runner.run(ctx, "docker", args, ""); err != nil {
 		return err
 	}
+	return a.ensureNestedNodeReady(ctx, true)
+}
+
+// terminateOrphanedPodProcesses is a recovery path for an unclean wrapper
+// stop. Nested pods use the host cgroup namespace, so their processes can
+// outlive the Docker container. Match only cgroups containing a Pod UID from
+// this node's persisted kubelet state; outer Zerops workloads have different
+// UIDs and are left untouched.
+func (a *agent) terminateOrphanedPodProcesses(ctx context.Context) {
+	podDirs, err := os.ReadDir(a.path("kubelet", "pods"))
+	if err != nil {
+		return
+	}
+	podUIDs := make([]string, 0, len(podDirs)*2)
+	for _, entry := range podDirs {
+		if !entry.IsDir() {
+			continue
+		}
+		podUIDs = append(podUIDs, entry.Name(), strings.ReplaceAll(entry.Name(), "-", "_"))
+	}
+	if len(podUIDs) == 0 {
+		return
+	}
+	procDirs, err := os.ReadDir("/proc")
+	if err != nil {
+		return
+	}
+	for _, entry := range procDirs {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid == os.Getpid() {
+			continue
+		}
+		cgroup, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "cgroup"))
+		if err != nil {
+			continue
+		}
+		for _, uid := range podUIDs {
+			if strings.Contains(string(cgroup), uid) {
+				_, _ = a.runner.run(ctx, "sudo", []string{"kill", "-KILL", "--", entry.Name()}, "")
+				break
+			}
+		}
+	}
+}
+
+func (a *agent) ensureNestedNodeReady(ctx context.Context, restartKubelet bool) error {
 	deadline := time.Now().Add(3 * time.Minute)
 	for time.Now().Before(deadline) {
 		checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		_, err := a.runner.run(checkCtx, "docker", []string{"exec", a.cfg.ContainerName, "systemctl", "is-active", "containerd"}, "")
 		cancel()
 		if err == nil {
+			if _, err := a.runner.run(ctx, "docker", []string{
+				"exec", a.cfg.ContainerName, "mount", "--make-rshared", "/",
+			}, ""); err != nil {
+				return fmt.Errorf("make nested node mounts recursively shared: %w", err)
+			}
+			if restartKubelet {
+				if _, err := a.runner.run(ctx, "docker", []string{
+					"exec", a.cfg.ContainerName, "systemctl", "restart", "kubelet",
+				}, ""); err != nil {
+					return fmt.Errorf("restart kubelet after nested node start: %w", err)
+				}
+			}
 			return nil
 		}
 		time.Sleep(2 * time.Second)
@@ -223,6 +285,29 @@ func (a *agent) stopNode(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, response{Status: state})
 		return
 	}
+	// Pods run in the host cgroup namespace. If Docker stops the systemd
+	// container first, containerd shims can survive outside its cgroup and
+	// retain host ports. Stop kubelet and its tasks while containerd can still
+	// account for them, then shut containerd down before stopping the wrapper.
+	gracefulStop := `
+systemctl stop kubelet || true
+if systemctl is-active --quiet containerd; then
+  for id in $(ctr -n k8s.io tasks ls -q 2>/dev/null); do
+    ctr -n k8s.io tasks kill --signal SIGKILL --all "$id" >/dev/null 2>&1 || true
+  done
+  for attempt in $(seq 1 30); do
+    [ -z "$(ctr -n k8s.io tasks ls -q 2>/dev/null)" ] && break
+    sleep 1
+  done
+  systemctl stop containerd || true
+fi
+`
+	if _, err := a.runner.run(r.Context(), "docker", []string{
+		"exec", a.cfg.ContainerName, "sh", "-lc", gracefulStop,
+	}, ""); err != nil {
+		writeError(w, fmt.Errorf("quiesce nested Kubernetes node: %w", err))
+		return
+	}
 	if _, err := a.runner.run(r.Context(), "docker", []string{"stop", "--time", "60", a.cfg.ContainerName}, ""); err != nil {
 		writeError(w, err)
 		return
@@ -245,7 +330,7 @@ func (a *agent) initCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if a.isJoined() {
+	if a.isJoined(r.Context()) {
 		hash, err := a.caHash(r.Context())
 		if err != nil {
 			writeError(w, err)
@@ -270,7 +355,11 @@ func (a *agent) initCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
 	defer cancel()
-	if _, err := a.runner.run(ctx, "docker", []string{"exec", a.cfg.ContainerName, "kubeadm", "init", "--config", "/etc/kubernetes/zerops-init.yaml", "--upload-certs"}, ""); err != nil {
+	if _, err := a.runner.run(ctx, "docker", []string{
+		"exec", a.cfg.ContainerName, "kubeadm", "init",
+		"--config", "/etc/kubernetes/zerops-init.yaml",
+		"--upload-certs", "--ignore-preflight-errors=SystemVerification",
+	}, ""); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -308,7 +397,7 @@ func (a *agent) joinCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if a.isJoined() {
+	if a.isJoined(r.Context()) {
 		writeJSON(w, http.StatusOK, response{Status: "already-joined"})
 		return
 	}
@@ -330,7 +419,11 @@ func (a *agent) joinCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
 	defer cancel()
-	if _, err := a.runner.run(ctx, "docker", []string{"exec", a.cfg.ContainerName, "kubeadm", "join", "--config", "/etc/kubernetes/zerops-join.yaml"}, ""); err != nil {
+	if _, err := a.runner.run(ctx, "docker", []string{
+		"exec", a.cfg.ContainerName, "kubeadm", "join",
+		"--config", "/etc/kubernetes/zerops-join.yaml",
+		"--ignore-preflight-errors=SystemVerification",
+	}, ""); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -360,24 +453,22 @@ func (a *agent) resetCluster(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response{Status: "reset"})
 }
 
-func (a *agent) kubeconfig(w http.ResponseWriter, _ *http.Request) {
+func (a *agent) kubeconfig(w http.ResponseWriter, r *http.Request) {
 	if a.cfg.NodeName != "k8scp1" {
 		http.Error(w, "kubeconfig is only available from k8scp1", http.StatusForbidden)
 		return
 	}
-	data, err := os.ReadFile(a.path("etc-kubernetes", "admin.conf"))
+	data, err := a.runner.run(r.Context(), "docker", []string{
+		"exec", a.cfg.ContainerName, "cat", "/etc/kubernetes/admin.conf",
+	}, "")
 	if err != nil {
-		if os.IsNotExist(err) {
-			http.Error(w, "cluster is not initialized", http.StatusConflict)
-			return
-		}
-		writeError(w, err)
+		http.Error(w, "cluster is not initialized", http.StatusConflict)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/yaml")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
+	_, _ = w.Write([]byte(data))
 }
 
 func (a *agent) containerState(ctx context.Context) (string, string) {
@@ -395,8 +486,10 @@ func (a *agent) containerState(ctx context.Context) (string, string) {
 	return state, ""
 }
 
-func (a *agent) isJoined() bool {
-	_, err := os.Stat(a.path("etc-kubernetes", "kubelet.conf"))
+func (a *agent) isJoined(ctx context.Context) bool {
+	_, err := a.runner.run(ctx, "docker", []string{
+		"exec", a.cfg.ContainerName, "test", "-s", "/etc/kubernetes/kubelet.conf",
+	}, "")
 	return err == nil
 }
 
@@ -414,7 +507,14 @@ func (a *agent) ensureStateDirs() error {
 }
 
 func (a *agent) clearState() error {
-	if err := os.RemoveAll(a.cfg.StateDir); err != nil {
+	if _, err := a.runner.run(context.Background(), "sudo", []string{"rm", "-rf", "--", a.cfg.StateDir}, ""); err != nil {
+		return err
+	}
+	if _, err := a.runner.run(context.Background(), "sudo", []string{
+		"install", "-d", "-m", "0700",
+		"-o", strconv.Itoa(os.Getuid()), "-g", strconv.Itoa(os.Getgid()),
+		a.cfg.StateDir,
+	}, ""); err != nil {
 		return err
 	}
 	return a.ensureStateDirs()

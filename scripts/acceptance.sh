@@ -16,11 +16,44 @@ restore_stopped_nodes() {
 }
 trap restore_stopped_nodes EXIT INT TERM
 
+wait_node_unready() {
+  local node=$1 deadline=$((SECONDS + 180)) ready
+  while (( SECONDS < deadline )); do
+    ready=$(kubectl get node "$node" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+    [[ "$ready" != True ]] && return 0
+    sleep 2
+  done
+  die "node did not leave Ready=True within three minutes: $node"
+}
+
+wait_node_dataplane_ready() {
+  local node=$1
+  kubectl -n calico-system wait pod -l k8s-app=calico-node \
+    --field-selector "spec.nodeName=$node" --for=condition=Ready --timeout=10m
+  kubectl -n istio-system wait pod -l k8s-app=istio-cni-node \
+    --field-selector "spec.nodeName=$node" --for=condition=Ready --timeout=10m
+  kubectl -n istio-system wait pod -l app=ztunnel \
+    --field-selector "spec.nodeName=$node" --for=condition=Ready --timeout=10m
+}
+
+wait_all_workload_pods_ready() {
+  local deadline=$((SECONDS + 900)) count
+  while (( SECONDS < deadline )); do
+    count=$(kubectl get pods -A -o json | jq \
+      '[.items[] | select(.status.phase != "Succeeded") | select(.status.phase != "Running" or any(.status.containerStatuses[]?; (.ready != true and (.state.terminated.exitCode // -1) != 0)))] | length')
+    [[ "$count" -eq 0 ]] && return 0
+    sleep 10
+  done
+  die 'not all non-job Pods became Running and Ready within 15 minutes'
+}
+
 load_zerops_env
-require_env K8S_AGENT_TOKEN elkstorage_password
+require_env K8S_AGENT_TOKEN ELASTICSEARCH_PASSWORD
 
 log 'validating repository manifests'
-kubeconform -strict -summary -ignore-missing-schemas "$ROOT_DIR/kubernetes" | tee "$artifact_dir/kubeconform.txt"
+kubeconform -strict -summary -ignore-missing-schemas \
+  -ignore-filename-pattern '.*-values\.yaml$' "$ROOT_DIR/kubernetes" \
+  | tee "$artifact_dir/kubeconform.txt"
 
 log 'checking six-node HA topology and core add-ons'
 kubectl get nodes -o wide | tee "$artifact_dir/nodes.txt"
@@ -28,6 +61,7 @@ kubectl get nodes -o wide | tee "$artifact_dir/nodes.txt"
 [[ $(kubectl get nodes -l node-role.kubernetes.io/control-plane -o name | wc -l) -eq 3 ]]
 [[ $(kubectl get nodes -l node-role.kubernetes.io/worker -o name | wc -l) -eq 3 ]]
 kubectl wait --for=condition=Ready nodes --all --timeout=5m
+wait_all_workload_pods_ready
 kubectl get pods -A -o wide | tee "$artifact_dir/pods.txt"
 kubectl get --raw=/readyz?verbose | tee "$artifact_dir/apiserver-readyz.txt"
 
@@ -42,13 +76,13 @@ spec:
     spec:
       automountServiceAccountToken: false
       nodeSelector: {node-role.kubernetes.io/worker: ""}
-      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
       containers:
         - name: netexec
           image: registry.k8s.io/e2e-test-images/agnhost:2.54
           args: [netexec, --http-port=8080]
           ports: [{name: http, containerPort: 8080}]
-          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true, runAsNonRoot: true}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true, runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532}
           resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {cpu: 100m, memory: 64Mi}}
 YAML
 kubectl -n workloads rollout status daemonset/network-proof --timeout=10m
@@ -62,32 +96,37 @@ kubectl -n workloads exec "$source_pod" -- getent hosts kubernetes.default.svc.c
 curl --fail --silent http://k8sedge:8080/healthz | tee "$artifact_dir/ingress.txt"
 curl --fail --silent http://k8sedge:18081/ >/dev/null
 
-log 'disrupting one non-primary control plane and proving API failover'
-restore_nodes+=(k8scp2)
-agent_request k8scp2 POST /v1/node/stop >/dev/null
-kubectl wait node/k8scp2 --for=condition=Ready=false --timeout=3m
-kubectl get --raw=/readyz >/dev/null
-agent_request k8scp2 POST /v1/node/start >/dev/null
-kubectl wait node/k8scp2 --for=condition=Ready --timeout=10m
-restore_nodes=()
+if [[ "${SKIP_DISRUPTION_TESTS:-false}" != true ]]; then
+  log 'disrupting one non-primary control plane and proving API failover'
+  restore_nodes+=(k8scp2)
+  agent_request k8scp2 POST /v1/node/stop >/dev/null
+  wait_node_unready k8scp2
+  kubectl get --raw=/readyz >/dev/null
+  agent_request k8scp2 POST /v1/node/start >/dev/null
+  kubectl wait node/k8scp2 --for=condition=Ready --timeout=10m
+  wait_node_dataplane_ready k8scp2
+  restore_nodes=()
 
-log 'disrupting a worker and proving workload rescheduling'
-victim=$(kubectl -n workloads get pods -l app=demo -o json | jq -er '.items[0].spec.nodeName')
-restore_nodes+=("$victim")
-agent_request "$victim" POST /v1/node/stop >/dev/null
-kubectl wait "node/$victim" --for=condition=Ready=false --timeout=3m
-deadline=$((SECONDS + 900))
-until [[ $(kubectl -n workloads get deployment demo -o jsonpath='{.status.availableReplicas}') == 2 ]] \
-  && [[ $(kubectl -n workloads get pods -l app=demo -o json | jq --arg node "$victim" '[.items[] | select(.spec.nodeName != $node and any(.status.conditions[]?; .type=="Ready" and .status=="True"))] | length') -eq 2 ]]; do
-  (( SECONDS < deadline )) || die 'demo workload did not reschedule after worker failure'
-  sleep 10
-done
-agent_request "$victim" POST /v1/node/start >/dev/null
-kubectl wait "node/$victim" --for=condition=Ready --timeout=10m
-restore_nodes=()
+  log 'disrupting a worker and proving workload rescheduling'
+  victim=$(kubectl -n workloads get pods -l app=demo -o json | jq -er '.items[0].spec.nodeName')
+  restore_nodes+=("$victim")
+  agent_request "$victim" POST /v1/node/stop >/dev/null
+  wait_node_unready "$victim"
+  deadline=$((SECONDS + 900))
+  until [[ $(kubectl -n workloads get deployment demo -o jsonpath='{.status.availableReplicas}') == 2 ]] \
+    && [[ $(kubectl -n workloads get pods -l app=demo -o json | jq --arg node "$victim" '[.items[] | select(.spec.nodeName != $node and any(.status.conditions[]?; .type=="Ready" and .status=="True"))] | length') -eq 2 ]]; do
+    (( SECONDS < deadline )) || die 'demo workload did not reschedule after worker failure'
+    sleep 10
+  done
+  agent_request "$victim" POST /v1/node/start >/dev/null
+  kubectl wait "node/$victim" --for=condition=Ready --timeout=10m
+  wait_node_dataplane_ready "$victim"
+  restore_nodes=()
+fi
 
 log 'proving fresh telemetry ingestion'
 marker="zerops-telemetry-${GITHUB_RUN_ID:-local}-$(date +%s)"
+kubectl -n workloads delete pod telemetry-proof --ignore-not-found --wait=true >/dev/null
 cat <<YAML | kubectl apply -f -
 apiVersion: v1
 kind: Pod
@@ -114,7 +153,7 @@ for attempt in {1..60}; do
 done
 
 for attempt in {1..60}; do
-  if curl --fail --silent -u "elastic:$elkstorage_password" \
+  if curl --fail --silent -u "elastic:$ELASTICSEARCH_PASSWORD" \
     --get --data-urlencode "q=$marker" 'http://elkstorage.zerops:9200/_search' \
     | tee "$artifact_dir/elk-proof.json" | jq -e '.hits.total.value > 0' >/dev/null; then break; fi
   (( attempt < 60 )) || die 'fresh redacted Kubernetes log was not found in Zerops ELK'
@@ -122,7 +161,7 @@ for attempt in {1..60}; do
 done
 
 for attempt in {1..60}; do
-  if curl --fail --silent -u "elastic:$elkstorage_password" \
+  if curl --fail --silent -u "elastic:$ELASTICSEARCH_PASSWORD" \
     --get --data-urlencode 'q=processor.event:transaction OR processor.event:span' 'http://elkstorage.zerops:9200/traces-*/_search' \
     | tee "$artifact_dir/trace-proof.json" | jq -e '.hits.total.value > 0' >/dev/null; then break; fi
   (( attempt < 60 )) || die 'fresh trace was not found in Zerops APM/ELK'
@@ -144,7 +183,7 @@ if [[ "${RUN_FULL_CONFORMANCE:-true}" == true ]]; then
   [[ -n "$result" ]] || die 'Sonobuoy result archive was not created'
   sonobuoy results "$result" | tee "$artifact_dir/sonobuoy-results.txt"
   sonobuoy results "$result" --mode=detailed | tee "$artifact_dir/sonobuoy-detailed.txt"
-  rg -q 'Status: passed' "$artifact_dir/sonobuoy-results.txt" || die 'CNCF conformance suite did not pass'
+  grep -q 'Status: passed' "$artifact_dir/sonobuoy-results.txt" || die 'CNCF conformance suite did not pass'
 fi
 
 kubectl version -o yaml > "$artifact_dir/kubernetes-version.yaml"

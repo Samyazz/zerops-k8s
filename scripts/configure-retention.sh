@@ -6,8 +6,8 @@ ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 source "$ROOT_DIR/scripts/lib.sh"
 
 load_zerops_env
-require_env elkstorage_password
-auth=(-u "elastic:$elkstorage_password")
+require_env ELASTICSEARCH_PASSWORD
+auth=(-u "elastic:$ELASTICSEARCH_PASSWORD")
 base=http://elkstorage.zerops:9200
 
 for attempt in {1..120}; do
@@ -21,9 +21,13 @@ curl --fail --silent --show-error "${auth[@]}" -X PUT "$base/_ilm/policy/zerops-
   --data '{"policy":{"phases":{"hot":{"actions":{}},"delete":{"min_age":"4h","actions":{"delete":{}}}}}}' >/dev/null
 curl --fail --silent --show-error "${auth[@]}" -X PUT "$base/_index_template/zerops-demo-4h" \
   -H 'Content-Type: application/json' \
-  --data '{"index_patterns":["logstash-*","logs-*","metrics-*","traces-*"],"priority":500,"template":{"settings":{"index.lifecycle.name":"zerops-demo-4h"}}}' >/dev/null
+  --data '{"index_patterns":["logstash-*"],"priority":500,"template":{"settings":{"index.lifecycle.name":"zerops-demo-4h"}}}' >/dev/null
 
-# Elastic APM prefers data streams. Apply native data-stream lifecycle where available.
-curl --silent --show-error "${auth[@]}" -X PUT "$base/_data_stream/*/_lifecycle" \
-  -H 'Content-Type: application/json' --data '{"data_retention":"4h"}' >/dev/null || true
+# Elastic APM and the Kubernetes log pipeline use data streams. Their existing
+# composable templates must remain authoritative, so configure native
+# data-stream lifecycle instead of shadowing those templates.
+for pattern in 'logs-*' 'metrics-*' 'traces-*'; do
+  curl --fail --silent --show-error "${auth[@]}" -X PUT "$base/_data_stream/$pattern/_lifecycle" \
+    -H 'Content-Type: application/json' --data '{"data_retention":"4h"}' >/dev/null
+done
 log 'configured four-hour Elasticsearch/ELK retention'

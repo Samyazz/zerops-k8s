@@ -68,6 +68,10 @@ resources:
 }
 
 func (a *agent) initConfig(ip string) string {
+	endpointSAN := a.cfg.ControlPlaneEndpoint
+	if host, _, err := net.SplitHostPort(a.cfg.ControlPlaneEndpoint); err == nil {
+		endpointSAN = host
+	}
 	return fmt.Sprintf(`apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 bootstrapTokens:
@@ -149,7 +153,7 @@ etcd:
     extraArgs:
       - name: listen-metrics-urls
         value: http://0.0.0.0:2381
-`, a.cfg.BootstrapToken, a.cfg.NodeName, ip, ip, a.cfg.CertificateKey, a.cfg.KubernetesVersion, a.cfg.ControlPlaneEndpoint, a.cfg.PodCIDR, a.cfg.ServiceCIDR, a.cfg.ControlPlaneEndpoint, ip)
+`, a.cfg.BootstrapToken, a.cfg.NodeName, ip, ip, a.cfg.CertificateKey, a.cfg.KubernetesVersion, a.cfg.ControlPlaneEndpoint, a.cfg.PodCIDR, a.cfg.ServiceCIDR, endpointSAN, ip)
 }
 
 func (a *agent) joinConfig(ip, caHash string) string {

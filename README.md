@@ -24,7 +24,7 @@ The repository owner runs **Deploy Zerops Kubernetes** from GitHub's Actions pag
 5. Initializes or updates the single repository-managed cluster.
 6. Reconciles networking, mesh, storage, dashboard, identity, and telemetry resources.
 7. Tests control-plane failover, actual worker loss and rescheduling, cross-node networking, DNS, ingestion, Kubescape, and full CNCF conformance.
-8. Stores the admin kubeconfig and four Headlamp role tokens as secret variables on `k8scp1` in Zerops.
+8. Stores the admin kubeconfig and four Headlamp role tokens as sensitive Zerops project variables.
 9. Leaves a passing cluster running. A failing or canceled run resets partial nested infrastructure.
 
 Required repository configuration:
@@ -45,7 +45,7 @@ For an existing project, the workflow uses the first-class recipe endpoints and 
 
 - Kubernetes API: `https://k8sedge:6443` while connected to the Zerops VPN.
 - Headlamp: `http://k8sedge:18081` while connected to the Zerops VPN.
-- Application ingress: the Zerops subdomain of `k8sedge`, which terminates public TLS before forwarding to Gateway API on port 8080.
+- Application ingress: `http://k8sedge:8080` over the Zerops VPN. Public exposure is intentionally omitted so enabling one outer subdomain cannot accidentally expose the API or Headlamp ports; publish applications through a separate HTTP-only Zerops edge if needed.
 - Grafana and Kibana: their Zerops service pages/subdomains and Zerops-generated credentials.
 - Kubeconfig and Headlamp credentials: sensitive Zerops project variables suffixed with `RUN_<GitHub run ID>`. The project tag `zerops-k8s.run` identifies the current set; decode `K8S_ADMIN_KUBECONFIG_B64_RUN_<ID>` before use.
 

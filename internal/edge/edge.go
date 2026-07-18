@@ -2,6 +2,7 @@ package edge
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -18,15 +19,17 @@ import (
 )
 
 type proxy struct {
-	name     string
-	listener string
-	backends []string
-	next     atomic.Uint64
+	name         string
+	listener     string
+	backends     []string
+	healthScheme string
+	healthPath   string
+	next         atomic.Uint64
 }
 
 func Run() error {
 	proxies := []*proxy{
-		{name: "kubernetes-api", listener: env("K8S_EDGE_API_LISTEN", ":6443"), backends: csvEnv("K8S_EDGE_API_BACKENDS", "k8scp1:6443,k8scp2:6443,k8scp3:6443")},
+		{name: "kubernetes-api", listener: env("K8S_EDGE_API_LISTEN", ":6443"), backends: csvEnv("K8S_EDGE_API_BACKENDS", "k8scp1:6443,k8scp2:6443,k8scp3:6443"), healthScheme: "https", healthPath: "/readyz"},
 		{name: "istio-gateway", listener: env("K8S_EDGE_INGRESS_LISTEN", ":8080"), backends: csvEnv("K8S_EDGE_INGRESS_BACKENDS", "k8sworker1:32080,k8sworker2:32080,k8sworker3:32080")},
 		{name: "headlamp", listener: env("K8S_EDGE_HEADLAMP_LISTEN", ":18081"), backends: csvEnv("K8S_EDGE_HEADLAMP_BACKENDS", "k8sworker1:32081,k8sworker2:32081,k8sworker3:32081")},
 	}
@@ -122,6 +125,10 @@ func (p *proxy) dial() (net.Conn, error) {
 	var failures []string
 	for i := range p.backends {
 		candidate := p.backends[(start+i)%len(p.backends)]
+		if !p.backendReady(candidate) {
+			failures = append(failures, candidate+": readiness check failed")
+			continue
+		}
 		conn, err := net.DialTimeout("tcp", candidate, 3*time.Second)
 		if err == nil {
 			return conn, nil
@@ -129,6 +136,23 @@ func (p *proxy) dial() (net.Conn, error) {
 		failures = append(failures, candidate+": "+err.Error())
 	}
 	return nil, fmt.Errorf("all backends failed: %s", strings.Join(failures, "; "))
+}
+
+func (p *proxy) backendReady(candidate string) bool {
+	if p.healthPath == "" {
+		return true
+	}
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true}, // Health-only request to the private kubeadm API certificate.
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Timeout: 3 * time.Second, Transport: transport}
+	response, err := client.Get(p.healthScheme + "://" + candidate + p.healthPath)
+	if err != nil {
+		return false
+	}
+	defer response.Body.Close()
+	return response.StatusCode == http.StatusOK
 }
 
 func healthHandler(proxies []*proxy) http.Handler {

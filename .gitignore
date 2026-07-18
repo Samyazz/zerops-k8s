@@ -6,6 +6,8 @@
 /artifacts/
 /dist/
 /kubeconfig
+/s3-fetch
+/zerops-k8s-hot
 *.log
 *.tar
 *.tar.gz

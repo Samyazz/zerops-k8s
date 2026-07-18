@@ -123,7 +123,3 @@ config:
         Syslog_Message_Key log
         Syslog_Appname_Key app
         Retry_Limit False
-  customParsers: |
-    [PARSER]
-        Name json
-        Format json

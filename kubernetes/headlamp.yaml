@@ -20,6 +20,8 @@ spec:
       serviceAccountName: headlamp-server
       securityContext:
         runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 100
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: headlamp
@@ -39,6 +41,8 @@ spec:
             capabilities: {drop: [ALL]}
             readOnlyRootFilesystem: true
             runAsNonRoot: true
+            runAsUser: 100
+            runAsGroup: 100
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
       volumes:

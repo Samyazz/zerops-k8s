@@ -39,6 +39,11 @@ alloy:
         targets = discovery.kubernetes.pods.targets
 
         rule {
+          source_labels = ["__meta_kubernetes_pod_node_name"]
+          regex         = env("NODE_NAME")
+          action        = "keep"
+        }
+        rule {
           source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
           regex         = "true"
           action        = "keep"
@@ -75,6 +80,11 @@ alloy:
       discovery.relabel "service_metrics" {
         targets = discovery.kubernetes.services.targets
         rule {
+          source_labels = ["__meta_kubernetes_endpoint_node_name"]
+          regex         = env("NODE_NAME")
+          action        = "keep"
+        }
+        rule {
           source_labels = ["__meta_kubernetes_service_annotation_prometheus_io_scrape"]
           regex         = "true"
           action        = "keep"
@@ -97,6 +107,10 @@ alloy:
         rule {
           source_labels = ["__meta_kubernetes_service_name"]
           target_label  = "service"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_endpoint_node_name"]
+          target_label  = "node"
         }
       }
 

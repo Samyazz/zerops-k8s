@@ -23,7 +23,9 @@ services:
     startWithoutCode: true
     envSecrets:
       K8S_AGENT_TOKEN: <@generateRandomString(<64>)>
-      K8S_BOOTSTRAP_TOKEN: <@generateRandomString(<6>)|lower>.<@generateRandomString(<16>)|lower>
+      # kubeadm requires exactly [a-z0-9]{6}.[a-z0-9]{16}. Integer
+      # generators avoid punctuation emitted by the generic string generator.
+      K8S_BOOTSTRAP_TOKEN: <@generateRandomInt(<100000>,<999999>)>.<@generateRandomInt(<10000000>,<99999999>)><@generateRandomInt(<10000000>,<99999999>)>
       K8S_CERTIFICATE_KEY: <@generateRandomBytes(<32>)|toHex>
       K8S_ENCRYPTION_KEY: <@generateRandomBytes(<32>)|toHex>
     verticalAutoscaling:
@@ -83,7 +85,6 @@ services:
   - hostname: k8sedge
     type: go@1.22
     startWithoutCode: true
-    enableSubdomainAccess: true
     minContainers: 2
     maxContainers: 2
     verticalAutoscaling:

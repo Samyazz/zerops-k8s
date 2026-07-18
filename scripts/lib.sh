@@ -21,11 +21,25 @@ require_env() {
 
 load_zerops_env() {
   require_env ZEROPS_PROJECT_ID
+  local env_file attempt
+  env_file=$(mktemp)
   # zCLI emits shell-compatible dotenv. Values never pass through workflow logs.
-  set -a
-  # shellcheck disable=SC1090
-  source <(zcli project env -P "$ZEROPS_PROJECT_ID" --service k8scp1)
-  set +a
+  # Write to a file first so a timed-out/API-error response is never sourced.
+  for attempt in 1 2 3 4 5; do
+    if timeout 60 zcli project env -P "$ZEROPS_PROJECT_ID" --service k8scp1 >"$env_file"; then
+      set -a
+      # shellcheck disable=SC1090
+      source "$env_file"
+      set +a
+      rm -f "$env_file"
+      return 0
+    fi
+    : >"$env_file"
+    log "Zerops environment fetch failed on attempt $attempt; retrying"
+    sleep 3
+  done
+  rm -f "$env_file"
+  die 'failed to load Zerops environment after five attempts'
 }
 
 agent_request() {

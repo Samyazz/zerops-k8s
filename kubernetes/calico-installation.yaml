@@ -9,6 +9,8 @@ spec:
   calicoNetwork:
     bgp: Disabled
     hostPorts: Enabled
+    nodeAddressAutodetectionV4:
+      kubernetes: NodeInternalIP
     ipPools:
       - blockSize: 26
         cidr: 10.244.0.0/16

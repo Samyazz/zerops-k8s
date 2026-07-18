@@ -1,6 +1,9 @@
 package nodeagent
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidCAHash(t *testing.T) {
 	valid := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -11,5 +14,27 @@ func TestValidCAHash(t *testing.T) {
 		if validCAHash(invalid) {
 			t.Fatalf("accepted invalid hash %q", invalid)
 		}
+	}
+}
+
+func TestInitConfigUsesHostWithoutPortForCertificateSAN(t *testing.T) {
+	a := agent{cfg: config{
+		BootstrapToken:       "123456.1234567890123456",
+		NodeName:             "k8scp1",
+		CertificateKey:       strings.Repeat("a", 64),
+		KubernetesVersion:    "v1.36.2",
+		ControlPlaneEndpoint: "k8sedge:6443",
+		PodCIDR:              "10.244.0.0/16",
+		ServiceCIDR:          "10.96.0.0/16",
+	}}
+	config := a.initConfig("10.0.0.1")
+	if !strings.Contains(config, "controlPlaneEndpoint: k8sedge:6443") {
+		t.Fatal("control-plane endpoint lost its API port")
+	}
+	if strings.Contains(config, "    - k8sedge:6443") {
+		t.Fatal("certificate SAN must not contain a port")
+	}
+	if !strings.Contains(config, "    - k8sedge\n") {
+		t.Fatal("certificate SAN is missing the endpoint hostname")
 	}
 }

@@ -18,9 +18,20 @@ spec:
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels: {app: demo}
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
       securityContext:
         seccompProfile: {type: RuntimeDefault}
         runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
       containers:
         - name: demo
           image: registry.k8s.io/e2e-test-images/agnhost:2.54
@@ -40,6 +51,8 @@ spec:
             capabilities: {drop: [ALL]}
             readOnlyRootFilesystem: true
             runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
 ---
 apiVersion: v1
 kind: Service

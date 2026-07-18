@@ -43,6 +43,8 @@ zerops:
         AWS_DEFAULT_REGION: us-east-1
         K8S_IMAGE_STORAGE_ENDPOINT: ${k8sbackups_apiUrl}
         K8S_IMAGE_STORAGE_BUCKET: ${k8sbackups_bucketName}
+        ELASTIC_APM_SECRET_TOKEN: ${apmserver_SECRET_TOKEN}
+        ELASTICSEARCH_PASSWORD: ${elkstorage_password}
       healthCheck:
         httpGet:
           port: 18080

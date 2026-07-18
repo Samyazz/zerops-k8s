@@ -1,6 +1,6 @@
 # Upgrades
 
-Ubuntu security updates are applied automatically inside the nested nodes, excluding kubelet, kubeadm, kubectl, and containerd. The scheduled Monday reconciliation rebuilds the pinned node image so new nodes also include current security packages.
+Ubuntu security updates are applied automatically inside the nested nodes, excluding kubelet, kubeadm, kubectl, and containerd. The scheduled Monday reconciliation reapplies the repository-managed cluster and observability configuration. Every clean deployment rebuilds the pinned node image so replacement nodes also include current security packages.
 
 Kubernetes and core add-ons are intentionally pinned in [`versions.env`](../versions.env). Automatic unreviewed Kubernetes minor upgrades are unsafe for stacked etcd, CNI, mesh, and storage, so Kubernetes upgrades use a controlled workflow:
 
