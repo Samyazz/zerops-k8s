@@ -339,6 +339,10 @@ func (a *agent) initCluster(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, response{Status: "already-initialized", CAHash: hash})
 		return
 	}
+	if err := a.writeResolverConfig(); err != nil {
+		writeError(w, err)
+		return
+	}
 	ip, err := primaryIPv4()
 	if err != nil {
 		writeError(w, err)
@@ -399,6 +403,10 @@ func (a *agent) joinCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.isJoined(r.Context()) {
 		writeJSON(w, http.StatusOK, response{Status: "already-joined"})
+		return
+	}
+	if err := a.writeResolverConfig(); err != nil {
+		writeError(w, err)
 		return
 	}
 	ip, err := primaryIPv4()

@@ -52,4 +52,21 @@ func TestInitConfigUsesHostWithoutPortForCertificateSAN(t *testing.T) {
 	if !strings.Contains(config, "    - k8sedge\n") {
 		t.Fatal("certificate SAN is missing the endpoint hostname")
 	}
+	if !strings.Contains(config, "kind: KubeletConfiguration\nresolvConf: /etc/kubernetes/resolv.conf\n") {
+		t.Fatal("kubelet resolver configuration is missing")
+	}
+}
+
+func TestResolverConfigKeepsNameserversAndDropsSearchDomains(t *testing.T) {
+	got, err := resolverConfig("nameserver 10.0.68.1\nsearch zerops\noptions ndots:5\nnameserver 2001:db8::53\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "nameserver 10.0.68.1\nnameserver 2001:db8::53\n"
+	if got != want {
+		t.Fatalf("resolver config = %q, want %q", got, want)
+	}
+	if _, err := resolverConfig("search zerops\n"); err == nil {
+		t.Fatal("resolver without a nameserver was accepted")
+	}
 }

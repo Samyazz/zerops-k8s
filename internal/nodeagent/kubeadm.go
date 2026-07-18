@@ -67,6 +67,32 @@ resources:
 	return os.WriteFile(a.path("etc-kubernetes", "encryption-config.yaml"), []byte(encryptionConfig), 0600)
 }
 
+func resolverConfig(source string) (string, error) {
+	var nameservers []string
+	for _, line := range strings.Split(source, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "nameserver" {
+			nameservers = append(nameservers, "nameserver "+fields[1])
+		}
+	}
+	if len(nameservers) == 0 {
+		return "", fmt.Errorf("host resolver contains no nameserver")
+	}
+	return strings.Join(nameservers, "\n") + "\n", nil
+}
+
+func (a *agent) writeResolverConfig() error {
+	source, err := os.ReadFile("/etc/resolv.conf")
+	if err != nil {
+		return fmt.Errorf("read host resolver: %w", err)
+	}
+	config, err := resolverConfig(string(source))
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(a.path("etc-kubernetes", "resolv.conf"), []byte(config), 0644)
+}
+
 func (a *agent) initConfig(ip string) string {
 	endpointSAN := a.cfg.ControlPlaneEndpoint
 	if host, _, err := net.SplitHostPort(a.cfg.ControlPlaneEndpoint); err == nil {
@@ -153,6 +179,10 @@ etcd:
     extraArgs:
       - name: listen-metrics-urls
         value: http://0.0.0.0:2381
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+resolvConf: /etc/kubernetes/resolv.conf
 `, a.cfg.BootstrapToken, a.cfg.NodeName, ip, ip, a.cfg.CertificateKey, a.cfg.KubernetesVersion, a.cfg.ControlPlaneEndpoint, a.cfg.PodCIDR, a.cfg.ServiceCIDR, endpointSAN, ip)
 }
 
