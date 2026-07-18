@@ -1,9 +1,24 @@
 package nodeagent
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestWriteJSONSetsExplicitContentLength(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writeJSON(recorder, http.StatusCreated, response{Status: "ok"})
+
+	result := recorder.Result()
+	t.Cleanup(func() { _ = result.Body.Close() })
+	want := strconv.Itoa(recorder.Body.Len())
+	if got := result.Header.Get("Content-Length"); got != want {
+		t.Fatalf("Content-Length = %q, want %q", got, want)
+	}
+}
 
 func TestValidCAHash(t *testing.T) {
 	valid := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
