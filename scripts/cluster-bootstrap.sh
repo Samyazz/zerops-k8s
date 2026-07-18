@@ -67,6 +67,7 @@ done
 kubectl wait --for=condition=Ready nodes --all --timeout=20m
 kubectl -n calico-system rollout status daemonset/calico-node --timeout=15m
 kubectl -n calico-system rollout status deployment/calico-kube-controllers --timeout=10m
+for node in "${NODES[@]}"; do recover_terminating_node_pods "$node" 0; done
 kubectl apply -f "$ROOT_DIR/kubernetes/calico-metrics.yaml"
 
 kubectl apply -f "$ROOT_DIR/kubernetes/namespaces.yaml"

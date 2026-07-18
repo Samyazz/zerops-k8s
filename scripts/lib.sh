@@ -67,6 +67,42 @@ wait_for_agents() {
   for node in "${pids[@]}"; do wait "$node"; done
 }
 
+terminating_node_pods() {
+  local node=$1
+  kubectl get pods -A --field-selector "spec.nodeName=$node" -o json | jq -r '
+    .items[]
+    | select(.metadata.deletionTimestamp != null)
+    | select(.metadata.annotations["kubernetes.io/config.mirror"] == null)
+    | [.metadata.namespace, .metadata.name]
+    | @tsv
+  '
+}
+
+recover_terminating_node_pods() {
+  local node=$1 grace_seconds=${2:-180} deadline pods namespace name
+  deadline=$((SECONDS + grace_seconds))
+  while true; do
+    pods=$(terminating_node_pods "$node")
+    [[ -z "$pods" ]] && return 0
+    (( SECONDS >= deadline )) && break
+    sleep 10
+  done
+
+  log "force-deleting pods left Terminating on recovered node $node"
+  while IFS=$'\t' read -r namespace name; do
+    [[ -n "$namespace" && -n "$name" ]] || continue
+    kubectl -n "$namespace" delete pod "$name" --ignore-not-found \
+      --force --grace-period=0 --wait=false >/dev/null
+  done <<<"$pods"
+
+  deadline=$((SECONDS + 120))
+  while (( SECONDS < deadline )); do
+    [[ -z $(terminating_node_pods "$node") ]] && return 0
+    sleep 5
+  done
+  die "pods remained Terminating on recovered node after forced API deletion: $node"
+}
+
 api_put() {
   local path=$1 payload=$2 response status
   response=$(mktemp)

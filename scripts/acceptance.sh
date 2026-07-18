@@ -105,6 +105,8 @@ if [[ "${SKIP_DISRUPTION_TESTS:-false}" != true ]]; then
   agent_request k8scp2 POST /v1/node/start >/dev/null
   kubectl wait node/k8scp2 --for=condition=Ready --timeout=10m
   wait_node_dataplane_ready k8scp2
+  recover_terminating_node_pods k8scp2
+  wait_all_workload_pods_ready
   restore_nodes=()
 
   log 'disrupting a worker and proving workload rescheduling'
@@ -121,6 +123,8 @@ if [[ "${SKIP_DISRUPTION_TESTS:-false}" != true ]]; then
   agent_request "$victim" POST /v1/node/start >/dev/null
   kubectl wait "node/$victim" --for=condition=Ready --timeout=10m
   wait_node_dataplane_ready "$victim"
+  recover_terminating_node_pods "$victim"
+  wait_all_workload_pods_ready
   restore_nodes=()
 fi
 
@@ -186,6 +190,8 @@ if [[ "${RUN_FULL_CONFORMANCE:-true}" == true ]]; then
   grep -q 'Status: passed' "$artifact_dir/sonobuoy-results.txt" || die 'CNCF conformance suite did not pass'
 fi
 
+wait_all_workload_pods_ready
+kubectl get pods -A -o wide | tee "$artifact_dir/pods-final.txt"
 kubectl version -o yaml > "$artifact_dir/kubernetes-version.yaml"
 kubectl get gateways,httproutes -A -o yaml > "$artifact_dir/gateway-api.yaml"
 kubectl get storageclass,pv,pvc -A -o yaml > "$artifact_dir/storage.yaml"
