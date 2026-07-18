@@ -31,13 +31,13 @@ if [[ "${RECONCILE_EXISTING:-false}" != true ]]; then
   digest=$(sha256sum "$archive" | awk '{print $1}')
   printf '%s  node-image.tar.gz\n' "$digest" > "$checksum"
 
-  require_env k8sbackups_apiUrl k8sbackups_accessKeyId k8sbackups_secretAccessKey k8sbackups_bucketName
-  s3_base="${k8sbackups_apiUrl%/}/$k8sbackups_bucketName"
+  require_env K8S_IMAGE_STORAGE_ENDPOINT K8S_IMAGE_STORAGE_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+  s3_base="${K8S_IMAGE_STORAGE_ENDPOINT%/}/$K8S_IMAGE_STORAGE_BUCKET"
   curl -fsS --retry 3 --aws-sigv4 aws:amz:us-west-1:s3 \
-    --user "$k8sbackups_accessKeyId:$k8sbackups_secretAccessKey" \
+    --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
     -T "$archive" "$s3_base/$object"
   curl -fsS --retry 3 --aws-sigv4 aws:amz:us-west-1:s3 \
-    --user "$k8sbackups_accessKeyId:$k8sbackups_secretAccessKey" \
+    --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
     -T "$checksum" "$s3_base/$object.sha256"
 fi
 
