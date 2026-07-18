@@ -24,7 +24,7 @@ ca_hash=$(jq -er .caHash <<<"$init_response")
 kubeconfig=${RUNNER_TEMP:-$ROOT_DIR/artifacts}/kubeconfig
 mkdir -p "$(dirname "$kubeconfig")"
 agent_request k8scp1 GET /v1/cluster/kubeconfig > "$kubeconfig"
-sed -i 's#^[[:space:]]*server:.*#    server: https://k8sedge:6443#' "$kubeconfig"
+sed -i 's#^[[:space:]]*server:.*#    server: https://k8sedge.zerops:6443#' "$kubeconfig"
 chmod 0600 "$kubeconfig"
 export KUBECONFIG=$kubeconfig
 printf 'KUBECONFIG=%s\n' "$kubeconfig" >> "${GITHUB_ENV:-/dev/null}"

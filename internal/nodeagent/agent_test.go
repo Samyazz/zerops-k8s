@@ -38,15 +38,15 @@ func TestInitConfigUsesHostWithoutPortForCertificateSAN(t *testing.T) {
 		NodeName:             "k8scp1",
 		CertificateKey:       strings.Repeat("a", 64),
 		KubernetesVersion:    "v1.36.2",
-		ControlPlaneEndpoint: "k8sedge:6443",
+		ControlPlaneEndpoint: "k8sedge.zerops:6443",
 		PodCIDR:              "10.244.0.0/16",
 		ServiceCIDR:          "10.96.0.0/16",
 	}}
 	config := a.initConfig("10.0.0.1")
-	if !strings.Contains(config, "controlPlaneEndpoint: k8sedge:6443") {
+	if !strings.Contains(config, "controlPlaneEndpoint: k8sedge.zerops:6443") {
 		t.Fatal("control-plane endpoint lost its API port")
 	}
-	if strings.Contains(config, "    - k8sedge:6443") {
+	if strings.Contains(config, "    - k8sedge.zerops:6443") {
 		t.Fatal("certificate SAN must not contain a port")
 	}
 	if !strings.Contains(config, "    - k8sedge\n") {
@@ -68,5 +68,18 @@ func TestResolverConfigKeepsNameserversAndDropsSearchDomains(t *testing.T) {
 	}
 	if _, err := resolverConfig("search zerops\n"); err == nil {
 		t.Fatal("resolver without a nameserver was accepted")
+	}
+}
+
+func TestLoadConfigMigratesLegacyControlPlaneEndpoint(t *testing.T) {
+	t.Setenv("K8S_AGENT_TOKEN", "test-token")
+	t.Setenv("K8S_NODE_NAME", "k8scp1")
+	t.Setenv("K8S_CONTROL_PLANE_ENDPOINT", "k8sedge:6443")
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ControlPlaneEndpoint != "k8sedge.zerops:6443" {
+		t.Fatalf("control-plane endpoint = %q", cfg.ControlPlaneEndpoint)
 	}
 }

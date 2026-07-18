@@ -43,7 +43,7 @@ For an existing project, the workflow uses the first-class recipe endpoints and 
 
 ## Access
 
-- Kubernetes API: `https://k8sedge:6443` while connected to the Zerops VPN.
+- Kubernetes API: `https://k8sedge.zerops:6443` while connected to the Zerops VPN.
 - Headlamp: `http://k8sedge:18081` while connected to the Zerops VPN.
 - Application ingress: `http://k8sedge:8080` over the Zerops VPN. Public exposure is intentionally omitted so enabling one outer subdomain cannot accidentally expose the API or Headlamp ports; publish applications through a separate HTTP-only Zerops edge if needed.
 - Grafana and Kibana: their Zerops service pages/subdomains and Zerops-generated credentials.
