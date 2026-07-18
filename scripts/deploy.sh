@@ -50,6 +50,7 @@ zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1
 vpn_connected=true
 cluster_touched=true
 
+export KUBECONFIG="${RUNNER_TEMP:-$ROOT_DIR/artifacts}/kubeconfig"
 "$ROOT_DIR/scripts/cluster-bootstrap.sh"
 "$ROOT_DIR/scripts/configure-retention.sh"
 "$ROOT_DIR/scripts/acceptance.sh"
