@@ -103,6 +103,23 @@ recover_terminating_node_pods() {
   die "pods remained Terminating on recovered node after forced API deletion: $node"
 }
 
+recover_all_terminating_pods() {
+  local grace_seconds=${1:-180} deadline node pods
+  deadline=$((SECONDS + grace_seconds))
+  while true; do
+    pods=$(kubectl get pods -A -o json | jq \
+      '[.items[] | select(.metadata.deletionTimestamp != null) | select(.metadata.annotations["kubernetes.io/config.mirror"] == null)] | length')
+    [[ "$pods" -eq 0 ]] && return 0
+    (( SECONDS >= deadline )) && break
+    sleep 10
+  done
+
+  while read -r node; do
+    [[ -n "$node" ]] || continue
+    recover_terminating_node_pods "$node" 0
+  done < <(kubectl get nodes -o name | sed 's#^node/##')
+}
+
 api_put() {
   local path=$1 payload=$2 response status
   response=$(mktemp)

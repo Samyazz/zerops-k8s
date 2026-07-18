@@ -40,7 +40,7 @@ wait_all_workload_pods_ready() {
   local deadline=$((SECONDS + 900)) count
   while (( SECONDS < deadline )); do
     count=$(kubectl get pods -A -o json | jq \
-      '[.items[] | select(.status.phase != "Succeeded") | select(.status.phase != "Running" or any(.status.containerStatuses[]?; (.ready != true and (.state.terminated.exitCode // -1) != 0)))] | length')
+      '[.items[] | select(.status.phase != "Succeeded") | select(.metadata.deletionTimestamp != null or .status.phase != "Running" or any(.status.containerStatuses[]?; (.ready != true and (.state.terminated.exitCode // -1) != 0)))] | length')
     [[ "$count" -eq 0 ]] && return 0
     sleep 10
   done
@@ -188,8 +188,11 @@ if [[ "${RUN_FULL_CONFORMANCE:-true}" == true ]]; then
   sonobuoy results "$result" | tee "$artifact_dir/sonobuoy-results.txt"
   sonobuoy results "$result" --mode=detailed | tee "$artifact_dir/sonobuoy-detailed.txt"
   grep -q 'Status: passed' "$artifact_dir/sonobuoy-results.txt" || die 'CNCF conformance suite did not pass'
+  sonobuoy delete >/dev/null 2>&1 || true
 fi
 
+recover_all_terminating_pods 60
+kubectl wait --for=delete namespace/sonobuoy --timeout=3m 2>/dev/null || true
 wait_all_workload_pods_ready
 kubectl get pods -A -o wide | tee "$artifact_dir/pods-final.txt"
 kubectl version -o yaml > "$artifact_dir/kubernetes-version.yaml"
