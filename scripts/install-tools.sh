@@ -7,16 +7,17 @@ source "$ROOT_DIR/versions.env"
 
 if command -v apt-get >/dev/null 2>&1; then
   sudo apt-get update
-  sudo apt-get install -y --no-install-recommends ca-certificates curl jq shellcheck
+  sudo apt-get install -y --no-install-recommends ca-certificates curl jq shellcheck wireguard-tools
 elif command -v apk >/dev/null 2>&1; then
   missing=()
   command -v bash >/dev/null 2>&1 || missing+=(bash)
   command -v curl >/dev/null 2>&1 || missing+=(curl)
   command -v sha256sum >/dev/null 2>&1 || missing+=(coreutils)
   command -v tar >/dev/null 2>&1 || missing+=(tar)
+  command -v wg-quick >/dev/null 2>&1 || missing+=(wireguard-tools)
   ((${#missing[@]} == 0)) || sudo apk add --no-cache ca-certificates "${missing[@]}"
 else
-  printf 'unsupported package manager: install curl, jq, and tar first\n' >&2
+  printf 'unsupported package manager: install curl, jq, tar, and wireguard-tools first\n' >&2
   exit 1
 fi
 
