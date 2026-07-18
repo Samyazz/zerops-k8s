@@ -467,6 +467,7 @@ func (a *agent) kubeconfig(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/yaml")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(data))
 }
