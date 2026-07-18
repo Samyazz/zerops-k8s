@@ -5,6 +5,7 @@ dnsPolicy: ClusterFirstWithHostNet
 podAnnotations:
   prometheus.io/scrape: "true"
   prometheus.io/port: "2020"
+  prometheus.io/path: /api/v1/metrics/prometheus
 rbac:
   create: true
   nodeAccess: true
