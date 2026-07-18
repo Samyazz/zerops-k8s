@@ -63,3 +63,27 @@ jobs:
           path: ${{ runner.temp }}/evidence
           if-no-files-found: warn
           retention-days: 1
+
+  cleanup:
+    needs: deploy
+    if: ${{ failure() || cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+    steps:
+      - name: Check out the exact requested revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install pinned cleanup tools
+        shell: bash
+        run: ./scripts/install-tools.sh
+
+      - name: Clean infrastructure owned by this failed run
+        shell: bash
+        run: |
+          zcli login "$ZEROPS_TOKEN"
+          ./scripts/cleanup-failed-run.sh
