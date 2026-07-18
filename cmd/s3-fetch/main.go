@@ -63,7 +63,7 @@ func download(cfg config) error {
 		return err
 	}
 
-	client := &http.Client{Timeout: 20 * time.Minute}
+	client := &http.Client{Timeout: 8 * time.Minute}
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
 		if err := fetchOnce(client, u, cfg, time.Now().UTC()); err == nil {
