@@ -22,6 +22,7 @@ zerops:
           protocol: tcp
       initCommands:
         - |
+          set -eu
           if ! docker image inspect "$K8S_NODE_IMAGE" >/dev/null 2>&1; then
             ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
             ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
@@ -71,6 +72,7 @@ zerops:
           protocol: tcp
       initCommands:
         - |
+          set -eu
           if ! docker image inspect "$K8S_NODE_IMAGE" >/dev/null 2>&1; then
             ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
             ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
@@ -124,6 +126,7 @@ zerops:
           protocol: tcp
       initCommands:
         - |
+          set -eu
           if ! docker image inspect "$K8S_NODE_IMAGE" >/dev/null 2>&1; then
             ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
             ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
@@ -177,6 +180,7 @@ zerops:
           protocol: tcp
       initCommands:
         - |
+          set -eu
           if ! docker image inspect "$K8S_NODE_IMAGE" >/dev/null 2>&1; then
             ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
             ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
@@ -228,6 +232,7 @@ zerops:
           protocol: tcp
       initCommands:
         - |
+          set -eu
           if ! docker image inspect "$K8S_NODE_IMAGE" >/dev/null 2>&1; then
             ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
             ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
@@ -279,6 +284,7 @@ zerops:
           protocol: tcp
       initCommands:
         - |
+          set -eu
           if ! docker image inspect "$K8S_NODE_IMAGE" >/dev/null 2>&1; then
             ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
             ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
