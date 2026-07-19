@@ -87,6 +87,8 @@ kubectl -n istio-system rollout status deployment/istiod --timeout=10m
 kubectl -n istio-system rollout status daemonset/ztunnel --timeout=10m
 
 log 'installing Longhorn, cert-manager, metrics-server, and exporters'
+kubectl apply -f "$ROOT_DIR/kubernetes/longhorn-node-prerequisites.yaml"
+kubectl -n kube-system rollout status daemonset/longhorn-node-prerequisites --timeout=10m
 helm repo add longhorn https://charts.longhorn.io --force-update >/dev/null
 helm upgrade --install longhorn longhorn/longhorn --version "$LONGHORN_VERSION" \
   --namespace longhorn-system --create-namespace \

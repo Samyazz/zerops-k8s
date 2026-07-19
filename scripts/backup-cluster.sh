@@ -39,6 +39,24 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+log 'ensuring the nested workers expose the Longhorn iSCSI frontend prerequisite'
+kubectl apply -f "$ROOT_DIR/kubernetes/longhorn-node-prerequisites.yaml" >/dev/null
+kubectl -n kube-system rollout status daemonset/longhorn-node-prerequisites --timeout=10m
+
+mapfile -t interrupted_backups < <(
+  kubectl -n longhorn-system get systembackups.longhorn.io -o json | jq -r \
+    '.items[] | select(.status.state != "Ready") | .metadata.name'
+)
+if (( ${#interrupted_backups[@]} > 0 )); then
+  log 'removing Longhorn proof resources left by an interrupted backup run'
+  kubectl -n zerops-backup-validation delete deployment longhorn-backup-proof \
+    --ignore-not-found --wait=true >/dev/null 2>&1 || true
+  kubectl -n longhorn-system delete systembackups.longhorn.io "${interrupted_backups[@]}" \
+    --wait=true --timeout=5m >/dev/null
+  kubectl -n zerops-backup-validation delete pvc longhorn-backup-proof \
+    --ignore-not-found --wait=true >/dev/null 2>&1 || true
+fi
+
 log 'configuring the Longhorn backup target from Zerops object-storage variables'
 kubectl -n longhorn-system create secret generic zerops-s3-backups \
   --from-literal="AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID" \
