@@ -48,8 +48,7 @@ for service in "${order[@]}"; do
     wait_longhorn_healthy
     log "cordoning and draining $service before its rolling node restart"
     kubectl cordon "$service" >/dev/null
-    kubectl drain "$service" --ignore-daemonsets --delete-emptydir-data --force \
-      --grace-period=120 --timeout=15m >/dev/null
+    safe_drain "$service"
     drained=true
     current_drained=true
   elif [[ -n "$node_ready" ]]; then

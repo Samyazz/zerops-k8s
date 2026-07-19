@@ -239,6 +239,28 @@ wait_longhorn_healthy() {
   die 'Longhorn volumes did not return to healthy before the disruption deadline'
 }
 
+safe_drain() {
+  local node=$1 result blockers
+  set +e
+  kubectl drain "$node" --ignore-daemonsets --delete-emptydir-data --force \
+    --grace-period=60 --timeout=3m --skip-wait-for-delete-timeout=60 >/dev/null
+  result=$?
+  set -e
+  (( result == 0 )) && return 0
+
+  # kubectl drain can leave its watch open after every evictable Pod has
+  # disappeared. Fail closed unless an independent API read proves that only
+  # static and DaemonSet Pods remain on the node.
+  blockers=$(kubectl get pods -A --field-selector "spec.nodeName=$node" -o json | jq '
+    [.items[]
+      | select(.metadata.annotations["kubernetes.io/config.mirror"] == null)
+      | select((.metadata.ownerReferences[0].kind // "") != "DaemonSet")
+    ] | length
+  ')
+  [[ "$blockers" -eq 0 ]] || die "node drain failed with $blockers evictable Pods remaining: $node"
+  log "drain watch timed out after all evictable Pods left $node; continuing from verified API state"
+}
+
 store_project_secret() {
   local key=$1 value=$2 response payload process_id
   [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "invalid Zerops project secret key: $key"

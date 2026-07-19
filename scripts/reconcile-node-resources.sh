@@ -104,8 +104,7 @@ while read -r hostname cpu ram disk; do
     wait_longhorn_healthy
     kubectl cordon "$hostname" >/dev/null
     current_cordoned=true
-    kubectl drain "$hostname" --ignore-daemonsets --delete-emptydir-data --force \
-      --grace-period=120 --timeout=15m >/dev/null
+    safe_drain "$hostname"
   fi
   api_request_file PUT "/service-stack/${service_id}/autoscaling" "$(<"$payload_file")" "$api_response"
   process_id=$(jq -r '.process.id // empty' "$api_response")

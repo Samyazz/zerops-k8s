@@ -82,8 +82,7 @@ scale_node() {
   wait_longhorn_healthy
   kubectl cordon "$node" >/dev/null
   current_cordoned=true
-  kubectl drain "$node" --ignore-daemonsets --delete-emptydir-data --force \
-    --grace-period=120 --timeout=15m >/dev/null
+  safe_drain "$node"
 
   jq -cn --argjson cpu "$cpu" --argjson ram "$ram" --argjson disk "$disk" '{
     customAutoscaling:{
@@ -178,8 +177,7 @@ remove_fourth_worker() {
   current_node=k8sworker4
   kubectl cordon k8sworker4 >/dev/null
   current_cordoned=true
-  kubectl drain k8sworker4 --ignore-daemonsets --delete-emptydir-data --force \
-    --grace-period=120 --timeout=15m >/dev/null
+  safe_drain k8sworker4
   agent_request k8sworker4 POST /v1/cluster/reset >/dev/null
   kubectl delete node k8sworker4 --ignore-not-found >/dev/null
   kubectl -n longhorn-system delete nodes.longhorn.io k8sworker4 --ignore-not-found >/dev/null
