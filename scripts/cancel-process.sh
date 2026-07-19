@@ -33,12 +33,29 @@ case "$status" in
     log "Zerops process is already terminal: $process_id ($status)"
     exit 0
     ;;
-  RUNNING|PENDING|NEW) ;;
+  CANCELING|ROLLBACKING)
+    log "Zerops process is already terminating: $process_id ($status)"
+    ;;
+  RUNNING|PENDING|NEW)
+    cancel_status=$(curl --silent --show-error --output "$response" --write-out '%{http_code}' \
+      -X PUT -H "Authorization: Bearer $ZEROPS_TOKEN" -H 'Content-Type: application/json' \
+      --data '{}' \
+      "${ZEROPS_API_BASE:-https://api.app-prg1.zerops.io/api/rest/public}/process/${process_id}/cancel")
+    if [[ "$cancel_status" == 2* ]]; then
+      log "Zerops accepted cancellation for process: $process_id"
+    elif [[ $(jq -r '.error.code // empty' "$response") == processIsAlreadyRunning ]]; then
+      # Zerops cannot cancel a build after its deployment phase has begun. Keep
+      # the repository lock and wait for the platform's bounded pipeline timeout.
+      log "Zerops deployment phase cannot be canceled; waiting for its platform timeout: $process_id"
+    else
+      jq '{error: (.error.code // .error // "request failed"), message: (.error.message // "")}' "$response" >&2 || true
+      die "Zerops refused cancellation for process: $process_id"
+    fi
+    ;;
   *) die "refusing to cancel process in unexpected state: $status" ;;
 esac
 
-api_request_file PUT "/process/${process_id}/cancel" '{}' "$response"
-deadline=$((SECONDS + 900))
+deadline=$((SECONDS + 1800))
 while (( SECONDS < deadline )); do
   api_request_file GET "/process/${process_id}" '' "$process"
   status=$(jq -er '.status' "$process")
@@ -50,4 +67,4 @@ while (( SECONDS < deadline )); do
   esac
   sleep 2
 done
-die "canceled Zerops process did not become terminal within 15 minutes: $process_id"
+die "Zerops process did not become terminal within 30 minutes: $process_id"
