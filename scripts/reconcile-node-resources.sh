@@ -11,9 +11,37 @@ require jq
 response=$(mktemp)
 payload_file=$(mktemp)
 api_response=$(mktemp)
-trap 'rm -f "$response" "$payload_file" "$api_response"' EXIT
+current_node=
+current_cordoned=false
+cleanup() {
+  if [[ "$current_cordoned" == true && -n "$current_node" ]]; then
+    kubectl uncordon "$current_node" >/dev/null 2>&1 || true
+  fi
+  rm -f "$response" "$payload_file" "$api_response"
+  [[ -z "${node_contract:-}" ]] || rm -f "$node_contract"
+}
+trap cleanup EXIT INT TERM
 
 api_request_file GET "/project/${ZEROPS_PROJECT_ID}/service-stack?limit=100" '' "$response"
+
+cp_cpu=$(cluster_tag_value cp-cpu); cp_cpu=${cp_cpu:-4}
+cp_ram=$(cluster_tag_value cp-ram); cp_ram=${cp_ram:-8}
+cp_disk=$(cluster_tag_value cp-disk); cp_disk=${cp_disk:-20}
+worker_cpu=$(cluster_tag_value worker-cpu); worker_cpu=${worker_cpu:-4}
+worker_ram=$(cluster_tag_value worker-ram); worker_ram=${worker_ram:-12}
+worker_disk=$(cluster_tag_value worker-disk); worker_disk=${worker_disk:-50}
+
+node_contract=$(mktemp)
+printf '%s %s %s %s\n' \
+  k8sworker1 "$worker_cpu" "$worker_ram" "$worker_disk" \
+  k8sworker2 "$worker_cpu" "$worker_ram" "$worker_disk" \
+  k8sworker3 "$worker_cpu" "$worker_ram" "$worker_disk" \
+  k8scp2 "$cp_cpu" "$cp_ram" "$cp_disk" \
+  k8scp3 "$cp_cpu" "$cp_ram" "$cp_disk" \
+  k8scp1 "$cp_cpu" "$cp_ram" "$cp_disk" >"$node_contract"
+if jq -e '.list | any(.name == "k8sworker4")' "$response" >/dev/null; then
+  sed -i "1i k8sworker4 $worker_cpu $worker_ram $worker_disk" "$node_contract"
+fi
 
 while read -r hostname cpu ram disk; do
   service_id=$(jq -er --arg hostname "$hostname" '.list[] | select(.name == $hostname) | .id' "$response") \
@@ -71,6 +99,14 @@ while read -r hostname cpu ram disk; do
     }' > "$payload_file"
 
   log "reconciling dedicated fixed resources for $hostname"
+  if [[ -n "${KUBECONFIG:-}" && -s "$KUBECONFIG" ]] && kubectl get "node/$hostname" >/dev/null 2>&1; then
+    current_node=$hostname
+    wait_longhorn_healthy
+    kubectl cordon "$hostname" >/dev/null
+    current_cordoned=true
+    kubectl drain "$hostname" --ignore-daemonsets --delete-emptydir-data --force \
+      --grace-period=120 --timeout=15m >/dev/null
+  fi
   api_request_file PUT "/service-stack/${service_id}/autoscaling" "$(<"$payload_file")" "$api_response"
   process_id=$(jq -r '.process.id // empty' "$api_response")
   [[ -z "$process_id" ]] || wait_public_process "$process_id"
@@ -79,18 +115,17 @@ while read -r hostname cpu ram disk; do
     wait_for_agent "$hostname"
     agent_request "$hostname" POST /v1/node/start >/dev/null
     kubectl wait "node/$hostname" --for=condition=Ready --timeout=15m
+    recover_terminating_node_pods "$hostname"
+    if [[ "$current_cordoned" == true ]]; then
+      kubectl uncordon "$hostname" >/dev/null
+      current_cordoned=false
+      wait_longhorn_healthy
+    fi
   fi
 
   # Refresh after every potentially restarting Docker service so subsequent
   # decisions use the authoritative post-operation state.
   api_request_file GET "/project/${ZEROPS_PROJECT_ID}/service-stack?limit=100" '' "$response"
-done <<'EOF'
-k8sworker1 4 12 50
-k8sworker2 4 12 50
-k8sworker3 4 12 50
-k8scp2 4 8 20
-k8scp3 4 8 20
-k8scp1 4 8 20
-EOF
+done <"$node_contract"
 
 "$ROOT_DIR/scripts/verify-node-resources.sh" >/dev/null

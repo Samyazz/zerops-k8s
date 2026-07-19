@@ -315,6 +315,60 @@ zerops:
           path: /healthz
       start: ./dist/zerops-k8s
 
+  # Optional fourth worker. It is provisioned only by the horizontal resize
+  # workflow, so importing the recipe still creates the three-worker HA floor.
+  - setup: worker4
+    build:
+      base: go@1.22
+      buildCommands:
+        - mkdir -p dist
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o s3-fetch ./cmd/s3-fetch
+      deployFiles:
+        - .
+    deploy:
+      temporaryShutdown: true
+      readinessCheck:
+        httpGet:
+          port: 18080
+          path: /healthz
+    run:
+      base: docker@26.1.5
+      ports:
+        - port: 18080
+          httpSupport: false
+          protocol: tcp
+      initCommands:
+        - |
+          set -eu
+          if ! docker image inspect "$K8S_NODE_IMAGE" >/dev/null 2>&1; then
+            ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+            ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+            sed -i 's#  .*#  node-image.tar.gz#' /home/zerops/node-image.tar.gz.sha256
+            (cd /home/zerops && sha256sum -c node-image.tar.gz.sha256)
+            docker image load -i /home/zerops/node-image.tar.gz
+            rm -f /home/zerops/node-image.tar.gz /home/zerops/node-image.tar.gz.sha256
+          fi
+        - sudo mkdir -p /var/lib/zerops-k8s
+        - sudo chown -R zerops:zerops /var/lib/zerops-k8s
+        - sudo mount --make-rshared /
+      envVariables:
+        K8S_MODE: node
+        K8S_NODE_ROLE: worker
+        K8S_NODE_NAME: k8sworker4
+        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
+        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
+        AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
+        AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
+        AWS_DEFAULT_REGION: us-east-1
+        K8S_IMAGE_STORAGE_ENDPOINT: ${k8sbackups_apiUrl}
+        K8S_IMAGE_STORAGE_BUCKET: ${k8sbackups_bucketName}
+      healthCheck:
+        httpGet:
+          port: 18080
+          path: /healthz
+      start: ./dist/zerops-k8s
+
   - setup: edge
     build:
       base: go@1.22

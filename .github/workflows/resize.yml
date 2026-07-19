@@ -1,0 +1,106 @@
+name: Resize Zerops Kubernetes
+
+on:
+  workflow_dispatch:
+    inputs:
+      desired_workers:
+        description: Worker count (the HA floor is three)
+        required: true
+        default: '3'
+        type: choice
+        options: ['3', '4']
+      control_plane_cpu:
+        description: Dedicated CPU cores per control plane
+        required: true
+        default: '4'
+        type: string
+      control_plane_ram_gb:
+        description: RAM in GB per control plane
+        required: true
+        default: '8'
+        type: string
+      control_plane_disk_gb:
+        description: Disk in GB per control plane (cannot shrink)
+        required: true
+        default: '20'
+        type: string
+      worker_cpu:
+        description: Dedicated CPU cores per worker
+        required: true
+        default: '4'
+        type: string
+      worker_ram_gb:
+        description: RAM in GB per worker
+        required: true
+        default: '12'
+        type: string
+      worker_disk_gb:
+        description: Disk in GB per worker (cannot shrink)
+        required: true
+        default: '50'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zerops-k8s-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  resize:
+    if: github.actor == github.repository_owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      ZEROPS_CLIENT_ID: ${{ vars.ZEROPS_CLIENT_ID }}
+      DESIRED_WORKERS: ${{ inputs.desired_workers }}
+      CONTROL_PLANE_CPU: ${{ inputs.control_plane_cpu }}
+      CONTROL_PLANE_RAM_GB: ${{ inputs.control_plane_ram_gb }}
+      CONTROL_PLANE_DISK_GB: ${{ inputs.control_plane_disk_gb }}
+      WORKER_CPU: ${{ inputs.worker_cpu }}
+      WORKER_RAM_GB: ${{ inputs.worker_ram_gb }}
+      WORKER_DISK_GB: ${{ inputs.worker_disk_gb }}
+    steps:
+      - name: Check out the exact requested revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install pinned tools
+        shell: bash
+        run: ./scripts/install-tools.sh
+
+      - name: Back up, resize one node at a time, and verify
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          vpn_connected=false
+          finish() {
+            status=$?
+            if [[ "$vpn_connected" == true ]]; then zcli vpn down >/dev/null 2>&1 || true; fi
+            exit "$status"
+          }
+          trap finish EXIT INT TERM
+          zcli login "$ZEROPS_TOKEN"
+          zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
+          vpn_connected=true
+          source ./scripts/lib.sh
+          load_zerops_env
+          export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
+          agent_request k8scp1 GET /v1/cluster/kubeconfig >"$KUBECONFIG"
+          sed -i 's#^[[:space:]]*server:.*#    server: https://k8sedge.zerops:6443#' "$KUBECONFIG"
+          chmod 0600 "$KUBECONFIG"
+          kubectl get --raw=/readyz >/dev/null
+          ./scripts/resize-cluster.sh
+
+      - name: Upload sanitized resize evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: zerops-k8s-resize-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/evidence
+          if-no-files-found: warn
+          retention-days: 1

@@ -192,7 +192,12 @@ set_cluster_state() {
   response=$(project_json)
   current=$(mktemp)
   jq --arg state "$state" --arg repository "$repository" --arg run "$run_id" '
-    .tagList = ([.tagList[]? | select(startswith("zerops-k8s.") | not)] + [
+    .tagList = ([.tagList[]? | select(
+      (startswith("zerops-k8s.managed=") | not)
+      and (startswith("zerops-k8s.repository=") | not)
+      and (startswith("zerops-k8s.state=") | not)
+      and (startswith("zerops-k8s.run=") | not)
+    )] + [
       "zerops-k8s.managed=true",
       "zerops-k8s.repository=" + $repository,
       "zerops-k8s.state=" + $state,
@@ -203,6 +208,35 @@ set_cluster_state() {
   payload=$(<"$current")
   api_request_file PUT "/project/${ZEROPS_PROJECT_ID}" "$payload" "$response"
   log "Zerops project cluster state set to $state"
+}
+
+set_cluster_tag() {
+  local key=$1 value=$2 response payload current prefix
+  [[ "$key" =~ ^[a-z][a-z0-9-]*$ ]] || die "invalid cluster tag key: $key"
+  [[ "$value" =~ ^[A-Za-z0-9._/-]+$ ]] || die "invalid cluster tag value for $key"
+  prefix="zerops-k8s.${key}="
+  response=$(project_json)
+  current=$(mktemp)
+  jq --arg prefix "$prefix" --arg tag "${prefix}${value}" '
+    .tagList = ([.tagList[]? | select(startswith($prefix) | not)] + [$tag])
+    | {name, description, publicIpV4Shared, tagList}
+  ' "$response" >"$current"
+  payload=$(<"$current")
+  api_request_file PUT "/project/${ZEROPS_PROJECT_ID}" "$payload" "$response"
+  rm -f "$current" "$response"
+  log "updated Zerops-side cluster setting: $key"
+}
+
+wait_longhorn_healthy() {
+  local deadline=${1:-$((SECONDS + 1200))} unhealthy
+  kubectl get crd volumes.longhorn.io >/dev/null 2>&1 || return 0
+  while (( SECONDS < deadline )); do
+    unhealthy=$(kubectl -n longhorn-system get volumes.longhorn.io -o json | jq \
+      '[.items[] | select(.status.robustness != "healthy")] | length')
+    [[ "$unhealthy" -eq 0 ]] && return 0
+    sleep 10
+  done
+  die 'Longhorn volumes did not return to healthy before the disruption deadline'
 }
 
 store_project_secret() {

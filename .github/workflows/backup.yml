@@ -1,18 +1,22 @@
-name: Roll Zerops Kubernetes nodes and add-ons
+name: Back up Zerops Kubernetes
 
 on:
   schedule:
-    - cron: '17 3 * * 1'
+    - cron: '23 */6 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: zerops-k8s-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
-  rolling-update:
+  backup:
     if: github.actor == github.repository_owner || github.event_name == 'schedule'
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 60
     env:
       ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
@@ -23,11 +27,20 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Enforce repository-owner trigger
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          [[ "$GITHUB_ACTOR" == "$GITHUB_REPOSITORY_OWNER" ]] || {
+            echo 'Only the repository owner may run backups.' >&2
+            exit 1
+          }
+
       - name: Install pinned tools
         shell: bash
         run: ./scripts/install-tools.sh
 
-      - name: Back up and roll one Kubernetes node at a time
+      - name: Create and verify etcd and Longhorn backups
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -48,13 +61,13 @@ jobs:
           sed -i 's#^[[:space:]]*server:.*#    server: https://k8sedge.zerops:6443#' "$KUBECONFIG"
           chmod 0600 "$KUBECONFIG"
           kubectl get --raw=/readyz >/dev/null
-          ./scripts/rolling-update.sh
+          ./scripts/backup-cluster.sh
 
-      - name: Upload sanitized rolling-update evidence
+      - name: Upload sanitized backup evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: zerops-k8s-rolling-update-evidence-${{ github.run_id }}
-          path: ${{ runner.temp }}/evidence
+          name: zerops-k8s-backup-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/evidence/backups
           if-no-files-found: warn
           retention-days: 1

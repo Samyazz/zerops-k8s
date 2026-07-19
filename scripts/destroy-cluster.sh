@@ -10,7 +10,10 @@ require_env K8S_AGENT_TOKEN
 
 failed=0
 pids=()
-for node in "${NODES[@]}"; do
+# shellcheck disable=SC2153 # NODES is declared by scripts/lib.sh.
+nodes=("${NODES[@]}")
+if service_exists k8sworker4; then nodes+=(k8sworker4); fi
+for node in "${nodes[@]}"; do
   (
     wait_for_agent "$node"
     agent_request "$node" POST /v1/cluster/reset >/dev/null

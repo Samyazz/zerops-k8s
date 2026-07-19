@@ -15,6 +15,26 @@ trap 'rm -f "$response" "$evidence"' EXIT
 
 api_request_file GET "/project/${ZEROPS_PROJECT_ID}/service-stack?limit=100" '' "$response"
 
+cp_cpu=$(cluster_tag_value cp-cpu); cp_cpu=${cp_cpu:-4}
+cp_ram=$(cluster_tag_value cp-ram); cp_ram=${cp_ram:-8}
+cp_disk=$(cluster_tag_value cp-disk); cp_disk=${cp_disk:-20}
+worker_cpu=$(cluster_tag_value worker-cpu); worker_cpu=${worker_cpu:-4}
+worker_ram=$(cluster_tag_value worker-ram); worker_ram=${worker_ram:-12}
+worker_disk=$(cluster_tag_value worker-disk); worker_disk=${worker_disk:-50}
+workers=$(cluster_tag_value workers); workers=${workers:-3}
+node_contract=$(mktemp)
+trap 'rm -f "$response" "$evidence" "$node_contract"' EXIT
+printf '%s %s %s %s\n' \
+  k8scp1 "$cp_cpu" "$cp_ram" "$cp_disk" \
+  k8scp2 "$cp_cpu" "$cp_ram" "$cp_disk" \
+  k8scp3 "$cp_cpu" "$cp_ram" "$cp_disk" \
+  k8sworker1 "$worker_cpu" "$worker_ram" "$worker_disk" \
+  k8sworker2 "$worker_cpu" "$worker_ram" "$worker_disk" \
+  k8sworker3 "$worker_cpu" "$worker_ram" "$worker_disk" >"$node_contract"
+if [[ "$workers" == 4 ]]; then
+  printf '%s %s %s %s\n' k8sworker4 "$worker_cpu" "$worker_ram" "$worker_disk" >>"$node_contract"
+fi
+
 while read -r hostname cpu ram disk; do
   jq -cer \
     --arg hostname "$hostname" \
@@ -48,14 +68,7 @@ while read -r hostname cpu ram disk; do
         )
     ' "$response" >> "$evidence" \
     || die "Zerops node resources do not match the dedicated fixed-size contract: $hostname"
-done <<'EOF'
-k8scp1 4 8 20
-k8scp2 4 8 20
-k8scp3 4 8 20
-k8sworker1 4 12 50
-k8sworker2 4 12 50
-k8sworker3 4 12 50
-EOF
+done <"$node_contract"
 
 result=$(jq -s --arg projectId "$ZEROPS_PROJECT_ID" \
   '{projectId:$projectId,verified:true,nodes:sort_by(.hostname)}' "$evidence")
@@ -65,4 +78,4 @@ if [[ -n "$output" ]]; then
 else
   printf '%s\n' "$result"
 fi
-log 'verified six single-instance Zerops nodes use dedicated 4-vCPU mode and fixed RAM/disk sizes'
+log "verified $((workers + 3)) single-instance Zerops nodes match the persisted dedicated resource contract"

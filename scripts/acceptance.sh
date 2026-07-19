@@ -80,6 +80,9 @@ wait_metric() {
 
 load_zerops_env
 require_env K8S_AGENT_TOKEN ELASTICSEARCH_PASSWORD
+expected_workers=$(cluster_tag_value workers)
+expected_workers=${expected_workers:-3}
+expected_nodes=$((expected_workers + 3))
 
 log 'checking Zerops node resource contract'
 "$ROOT_DIR/scripts/verify-node-resources.sh" "$artifact_dir/zerops-node-resources.json"
@@ -89,11 +92,11 @@ kubeconform -strict -summary -ignore-missing-schemas \
   -ignore-filename-pattern '.*-values\.yaml$' "$ROOT_DIR/kubernetes" \
   | tee "$artifact_dir/kubeconform.txt"
 
-log 'checking six-node HA topology and core add-ons'
+log "checking ${expected_nodes}-node HA topology and core add-ons"
 kubectl get nodes -o wide | tee "$artifact_dir/nodes.txt"
-[[ $(kubectl get nodes -o json | jq '[.items[] | select(any(.status.conditions[]; .type=="Ready" and .status=="True"))] | length') -eq 6 ]]
+[[ $(kubectl get nodes -o json | jq '[.items[] | select(any(.status.conditions[]; .type=="Ready" and .status=="True"))] | length') -eq "$expected_nodes" ]]
 [[ $(kubectl get nodes -l node-role.kubernetes.io/control-plane -o name | wc -l) -eq 3 ]]
-[[ $(kubectl get nodes -l node-role.kubernetes.io/worker -o name | wc -l) -eq 3 ]]
+[[ $(kubectl get nodes -l node-role.kubernetes.io/worker -o name | wc -l) -eq "$expected_workers" ]]
 kubectl wait --for=condition=Ready nodes --all --timeout=5m
 wait_all_workload_pods_ready
 kubectl get pods -A -o wide | tee "$artifact_dir/pods.txt"
@@ -121,7 +124,7 @@ spec:
 YAML
 kubectl -n workloads rollout status daemonset/network-proof --timeout=10m
 mapfile -t proof_pods < <(kubectl -n workloads get pods -l app=network-proof -o json | jq -r '.items | sort_by(.spec.nodeName)[] | .metadata.name')
-[[ ${#proof_pods[@]} -eq 3 ]]
+[[ ${#proof_pods[@]} -eq "$expected_workers" ]]
 source_pod=${proof_pods[0]}
 target_ip=$(kubectl -n workloads get pod "${proof_pods[1]}" -o jsonpath='{.status.podIP}')
 kubectl -n workloads exec "$source_pod" -- wget -qO- "http://$target_ip:8080/hostname" | tee "$artifact_dir/cross-node-network.txt"
@@ -191,22 +194,22 @@ kubectl get --raw="/api/v1/namespaces?labelSelector=$audit_selector" >/dev/null
 
 metric_evidence="$artifact_dir/prometheus-proof.ndjson"
 : > "$metric_evidence"
-wait_metric nodes eq 6 'count(max by (exported_node) (timestamp(kube_node_info)) > time() - 120)'
-wait_metric kubelet eq 6 'count(timestamp(up{job="kubelet"} == 1) > time() - 120)'
-wait_metric cadvisor eq 6 'count(timestamp(up{job="cadvisor"} == 1) > time() - 120)'
+wait_metric nodes eq "$expected_nodes" 'count(max by (exported_node) (timestamp(kube_node_info)) > time() - 120)'
+wait_metric kubelet eq "$expected_nodes" 'count(timestamp(up{job="kubelet"} == 1) > time() - 120)'
+wait_metric cadvisor eq "$expected_nodes" 'count(timestamp(up{job="cadvisor"} == 1) > time() - 120)'
 wait_metric etcd eq 3 'count(timestamp(up{job="etcd"} == 1) > time() - 120)'
 wait_metric apiserver eq 3 'count(timestamp(up{job="apiserver"} == 1) > time() - 120)'
 wait_metric controller_manager eq 3 'count(timestamp(up{job="controller-manager"} == 1) > time() - 120)'
 wait_metric scheduler eq 3 'count(timestamp(up{job="scheduler"} == 1) > time() - 120)'
-wait_metric kube_proxy eq 6 'count(timestamp(up{job="kube-proxy"} == 1) > time() - 120)'
+wait_metric kube_proxy eq "$expected_nodes" 'count(timestamp(up{job="kube-proxy"} == 1) > time() - 120)'
 wait_metric calico ge 9 'count(timestamp(up{job="prometheus.scrape.pods",namespace="calico-system"} == 1) > time() - 120)'
 wait_metric istio_system ge 13 'count(timestamp(up{job="prometheus.scrape.pods",namespace="istio-system"} == 1) > time() - 120)'
 wait_metric istio_ingress ge 2 'count(timestamp(up{job="prometheus.scrape.pods",namespace="istio-ingress"} == 1) > time() - 120)'
 wait_metric cert_manager ge 3 'count(timestamp(up{job="prometheus.scrape.pods",namespace="cert-manager"} == 1) > time() - 120)'
-wait_metric node_exporter eq 6 'count(timestamp(up{job="prometheus.scrape.services",namespace="observability",service="node-exporter-prometheus-node-exporter"} == 1) > time() - 120)'
+wait_metric node_exporter eq "$expected_nodes" 'count(timestamp(up{job="prometheus.scrape.services",namespace="observability",service="node-exporter-prometheus-node-exporter"} == 1) > time() - 120)'
 wait_metric kube_state_metrics eq 1 'count(timestamp(up{job="prometheus.scrape.services",namespace="observability",service="kube-state-metrics"} == 1) > time() - 120)'
-wait_metric alloy eq 6 'count(timestamp(up{job="prometheus.scrape.services",namespace="observability",service="alloy"} == 1) > time() - 120)'
-wait_metric fluent_bit eq 6 'count(timestamp(up{job="prometheus.scrape.pods",namespace="observability",pod=~"fluent-bit-.*"} == 1) > time() - 120)'
+wait_metric alloy eq "$expected_nodes" 'count(timestamp(up{job="prometheus.scrape.services",namespace="observability",service="alloy"} == 1) > time() - 120)'
+wait_metric fluent_bit eq "$expected_nodes" 'count(timestamp(up{job="prometheus.scrape.pods",namespace="observability",pod=~"fluent-bit-.*"} == 1) > time() - 120)'
 wait_metric longhorn ge 3 'count(timestamp(up{job="prometheus.scrape.services",namespace="longhorn-system",service="longhorn-backend"} == 1) > time() - 120)'
 jq -s '.' "$metric_evidence" > "$artifact_dir/prometheus-proof.json"
 rm -f "$metric_evidence"

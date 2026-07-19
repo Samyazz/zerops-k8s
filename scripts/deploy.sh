@@ -11,7 +11,7 @@ vpn_connected=false
 
 finish() {
   status=$?
-  if [[ "$success" != true && "$cluster_touched" == true ]]; then
+  if [[ "$success" != true && "$cluster_touched" == true && "${RECONCILE_EXISTING:-false}" != true ]]; then
     log 'deployment failed or was canceled; destroying partial nested infrastructure'
     "$ROOT_DIR/scripts/destroy-cluster.sh" || true
   fi
@@ -64,6 +64,7 @@ fi
 export KUBECONFIG="${RUNNER_TEMP:-$ROOT_DIR/artifacts}/kubeconfig"
 "$ROOT_DIR/scripts/cluster-bootstrap.sh"
 "$ROOT_DIR/scripts/configure-retention.sh"
+"$ROOT_DIR/scripts/backup-cluster.sh"
 "$ROOT_DIR/scripts/acceptance.sh"
 "$ROOT_DIR/scripts/store-credentials.sh"
 set_cluster_state running "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"

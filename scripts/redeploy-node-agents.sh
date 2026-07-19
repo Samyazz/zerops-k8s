@@ -14,15 +14,27 @@ if [[ -z "${K8S_AGENT_TOKEN:-}" ]]; then
 fi
 require_env K8S_AGENT_TOKEN
 
+current_service=
+current_drained=false
+restore_cordon() {
+  if [[ "$current_drained" == true && -n "$current_service" && -s "${KUBECONFIG:-}" ]]; then
+    kubectl uncordon "$current_service" >/dev/null 2>&1 || true
+  fi
+}
+trap restore_cordon EXIT INT TERM
+
 declare -A setups=(
   [k8sworker1]=worker1
   [k8sworker2]=worker2
   [k8sworker3]=worker3
+  [k8sworker4]=worker4
   [k8scp2]=controlplane2
   [k8scp3]=controlplane3
   [k8scp1]=controlplane1
 )
-order=(k8sworker1 k8sworker2 k8sworker3 k8scp2 k8scp3 k8scp1)
+order=(k8sworker1 k8sworker2 k8sworker3)
+if service_exists k8sworker4; then order+=(k8sworker4); fi
+order+=(k8scp2 k8scp3 k8scp1)
 targets=("${order[@]}")
 if (( $# )); then
   targets=("$@")
@@ -40,7 +52,19 @@ fi
 for service in "${order[@]}"; do
   [[ " ${targets[*]} " == *" $service "* ]] || continue
   setup=${setups[$service]}
+  current_service=$service
+  current_drained=false
   restart_node=false
+  drained=false
+  if [[ -n "${KUBECONFIG:-}" && -s "${KUBECONFIG:-}" ]] && kubectl get "node/$service" >/dev/null 2>&1; then
+    wait_longhorn_healthy
+    log "cordoning and draining $service before its rolling agent update"
+    kubectl cordon "$service" >/dev/null
+    kubectl drain "$service" --ignore-daemonsets --delete-emptydir-data --force \
+      --grace-period=120 --timeout=15m >/dev/null
+    drained=true
+    current_drained=true
+  fi
   if curl --fail --silent --connect-timeout 3 --max-time 5 "http://${service}:18080/healthz" >/dev/null; then
     node_state=$(agent_request "$service" GET /v1/state | jq -er '.status')
     if [[ "$node_state" == running ]]; then
@@ -75,5 +99,10 @@ for service in "${order[@]}"; do
       kubectl wait "node/$service" --for=condition=Ready --timeout=15m
       recover_terminating_node_pods "$service"
     fi
+  fi
+  if [[ "$drained" == true ]]; then
+    kubectl uncordon "$service" >/dev/null
+    current_drained=false
+    wait_longhorn_healthy
   fi
 done
