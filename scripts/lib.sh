@@ -173,23 +173,34 @@ wait_public_process() {
 }
 
 project_json() {
-  local response
+  local response attempt
   response=$(mktemp)
-  api_request_file GET "/project/${ZEROPS_PROJECT_ID}" '' "$response"
-  printf '%s\n' "$response"
+  for attempt in 1 2 3 4 5; do
+    if api_request_file GET "/project/${ZEROPS_PROJECT_ID}" '' "$response"; then
+      printf '%s\n' "$response"
+      return 0
+    fi
+    sleep $((attempt * 2))
+  done
+  rm -f "$response"
+  return 1
 }
 
 cluster_tag_value() {
-  local key=$1 response
-  response=$(project_json)
-  jq -r --arg prefix "zerops-k8s.${key}=" \
-    '.tagList[]? | select(startswith($prefix)) | ltrimstr($prefix)' "$response" | tail -n 1
+  local key=$1 response value
+  response=$(project_json) || return 1
+  value=$(jq -r --arg prefix "zerops-k8s.${key}=" \
+    '.tagList[]? | select(startswith($prefix)) | ltrimstr($prefix)' "$response" | tail -n 1)
+  rm -f "$response"
+  printf '%s\n' "$value"
 }
 
 assert_repository_cluster() {
-  local state repository expected_repository
-  state=$(cluster_tag_value state)
-  repository=$(cluster_tag_value repository)
+  local state repository expected_repository response
+  response=$(project_json) || die 'could not read the Zerops-side cluster lock after five attempts'
+  state=$(jq -r '[.tagList[]? | select(startswith("zerops-k8s.state=")) | ltrimstr("zerops-k8s.state=")] | last // ""' "$response")
+  repository=$(jq -r '[.tagList[]? | select(startswith("zerops-k8s.repository=")) | ltrimstr("zerops-k8s.repository=")] | last // ""' "$response")
+  rm -f "$response"
   expected_repository=${GITHUB_REPOSITORY:-Samyazz/zerops-k8s}
   [[ "$state" != cleanup-failed ]] \
     || die 'the Zerops-side lock is cleanup-failed; run the explicit destroy workflow before continuing'
