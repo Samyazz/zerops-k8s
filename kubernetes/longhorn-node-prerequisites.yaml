@@ -38,8 +38,8 @@ spec:
           securityContext:
             privileged: true
           resources:
-            requests: {cpu: 5m, memory: 8Mi}
-            limits: {cpu: 50m, memory: 32Mi}
+            requests: {cpu: 5m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 128Mi}
           volumeMounts:
             - name: modules
               mountPath: /lib/modules
