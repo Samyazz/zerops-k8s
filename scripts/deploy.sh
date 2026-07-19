@@ -34,7 +34,7 @@ if [[ -n "$project_repository" && "$project_repository" != unknown && "${project
   die "this project is already managed by $project_repository"
 fi
 
-if [[ "$project_state" == running ]]; then
+if [[ -n "$project_state" && "$project_state" != destroyed ]]; then
   export RECONCILE_EXISTING=true
   set_cluster_tag operation reconcile
   log 'existing repository-managed cluster detected; reconciling it in place'
