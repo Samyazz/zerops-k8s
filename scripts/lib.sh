@@ -278,11 +278,29 @@ repair_replaced_longhorn_disk() {
     || die "refusing to replace the stale Longhorn disk record on $node because it still owns $replicas replicas"
 
   log "recreating the stale empty Longhorn disk record after filesystem replacement: $node"
+  deadline=$((SECONDS + 180))
+  while (( SECONDS < deadline )); do
+    ready=$(kubectl get "node/$node" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+    [[ "$ready" != True ]] && break
+    sleep 3
+  done
+  [[ "$ready" != True ]] || die "node did not become NotReady before Longhorn disk replacement: $node"
   kubectl -n longhorn-system patch "nodes.longhorn.io/$node" --type=merge \
     -p '{"spec":{"allowScheduling":false}}' >/dev/null
   kubectl -n longhorn-system delete "nodes.longhorn.io/$node" --wait=true >/dev/null
   kubectl label node "$node" node.longhorn.io/create-default-disk=true --overwrite >/dev/null
-  deadline=$((SECONDS + 600))
+}
+
+longhorn_disk_needs_replacement() {
+  local node=$1
+  kubectl -n longhorn-system get "nodes.longhorn.io/$node" -o json 2>/dev/null | jq -e '
+    any(.status.diskStatus[]?.conditions[]?;
+      .type == "Ready" and .status == "False" and .reason == "DiskFilesystemChanged")
+  ' >/dev/null
+}
+
+wait_longhorn_disk_ready() {
+  local node=$1 deadline=$((SECONDS + 600)) ready
   while (( SECONDS < deadline )); do
     ready=$(kubectl -n longhorn-system get "nodes.longhorn.io/$node" -o json 2>/dev/null | jq -r \
       '[.status.diskStatus[]?.conditions[]? | select(.type == "Ready") | .status] | first // ""')
