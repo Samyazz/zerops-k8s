@@ -38,6 +38,11 @@ init_response=$(agent_request k8scp1 POST /v1/cluster/init)
 ca_hash=$(jq -er .caHash <<<"$init_response")
 join_payload=$(jq -cn --arg hash "$ca_hash" '{caHash:$hash}')
 
+for worker in k8sworker1 k8sworker2 k8sworker3 k8sworker4; do
+  kubectl get "node/$worker" >/dev/null 2>&1 || continue
+  repair_replaced_longhorn_disk "$worker"
+done
+
 for service in "${order[@]}"; do
   [[ " ${targets[*]} " == *" $service "* ]] || continue
   current_service=$service

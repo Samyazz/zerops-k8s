@@ -261,6 +261,37 @@ safe_drain() {
   log "drain watch timed out after all evictable Pods left $node; continuing from verified API state"
 }
 
+repair_replaced_longhorn_disk() {
+  local node=$1 reason replicas deadline ready
+  kubectl -n longhorn-system get "nodes.longhorn.io/$node" >/dev/null 2>&1 || return 0
+  reason=$(kubectl -n longhorn-system get "nodes.longhorn.io/$node" -o json | jq -r '
+    [.status.diskStatus[]?.conditions[]?
+      | select(.type == "Ready" and .status == "False")
+      | .reason
+    ] | first // ""
+  ')
+  [[ "$reason" == DiskFilesystemChanged ]] || return 0
+
+  replicas=$(kubectl -n longhorn-system get replicas.longhorn.io -o json | jq \
+    --arg node "$node" '[.items[] | select(.spec.nodeID == $node)] | length')
+  [[ "$replicas" -eq 0 ]] \
+    || die "refusing to replace the stale Longhorn disk record on $node because it still owns $replicas replicas"
+
+  log "recreating the stale empty Longhorn disk record after filesystem replacement: $node"
+  kubectl -n longhorn-system patch "nodes.longhorn.io/$node" --type=merge \
+    -p '{"spec":{"allowScheduling":false}}' >/dev/null
+  kubectl -n longhorn-system delete "nodes.longhorn.io/$node" --wait=true >/dev/null
+  kubectl label node "$node" node.longhorn.io/create-default-disk=true --overwrite >/dev/null
+  deadline=$((SECONDS + 600))
+  while (( SECONDS < deadline )); do
+    ready=$(kubectl -n longhorn-system get "nodes.longhorn.io/$node" -o json 2>/dev/null | jq -r \
+      '[.status.diskStatus[]?.conditions[]? | select(.type == "Ready") | .status] | first // ""')
+    [[ "$ready" == True ]] && return 0
+    sleep 5
+  done
+  die "replacement Longhorn disk did not become Ready: $node"
+}
+
 store_project_secret() {
   local key=$1 value=$2 response payload process_id
   [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "invalid Zerops project secret key: $key"
