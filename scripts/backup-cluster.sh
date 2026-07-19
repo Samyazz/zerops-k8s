@@ -15,6 +15,7 @@ if [[ -z "${K8S_IMAGE_STORAGE_ENDPOINT:-}" ]]; then
   load_zerops_env
 fi
 require_env K8S_IMAGE_STORAGE_ENDPOINT K8S_IMAGE_STORAGE_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+assert_repository_cluster
 
 backup_region=${K8S_BACKUP_REGION:-us-west-1}
 backup_prefix=${K8S_BACKUP_PREFIX:-longhorn}

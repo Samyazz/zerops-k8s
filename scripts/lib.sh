@@ -186,6 +186,19 @@ cluster_tag_value() {
     '.tagList[]? | select(startswith($prefix)) | ltrimstr($prefix)' "$response" | tail -n 1
 }
 
+assert_repository_cluster() {
+  local state repository expected_repository
+  state=$(cluster_tag_value state)
+  repository=$(cluster_tag_value repository)
+  expected_repository=${GITHUB_REPOSITORY:-Samyazz/zerops-k8s}
+  [[ "$state" != cleanup-failed ]] \
+    || die 'the Zerops-side lock is cleanup-failed; run the explicit destroy workflow before continuing'
+  [[ -n "$state" && "$state" != destroyed ]] \
+    || die 'no live repository-managed cluster is available for this operation'
+  [[ -z "$repository" || "$repository" == unknown || "${repository,,}" == "${expected_repository,,}" ]] \
+    || die "this Zerops project is managed by $repository, not $expected_repository"
+}
+
 set_cluster_state() {
   local state=$1 repository=${2:-${GITHUB_REPOSITORY:-unknown}} run_id=${3:-${GITHUB_RUN_ID:-local}}
   local response payload current

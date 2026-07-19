@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: zerops-k8s-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   rolling-update:
     if: github.actor == github.repository_owner || github.event_name == 'schedule'
