@@ -1,6 +1,6 @@
 # Kubernetes on Zerops
 
-This repository is a publishable Zerops recipe and an owner-triggered GitHub Actions deployment for a full six-node, highly available Kubernetes cluster inside one existing Zerops project.
+This repository is a publishable Zerops recipe and owner-triggered GitHub Actions automation for a full, highly available Kubernetes cluster inside one existing Zerops project. The default topology has six nodes; the resize workflow can add a fourth worker temporarily or permanently.
 
 The design intentionally treats Zerops as the infrastructure layer and Kubernetes as a nested control plane:
 
@@ -24,9 +24,10 @@ The repository owner runs **Deploy Zerops Kubernetes** from GitHub's Actions pag
 5. Deploys the node agents and redundant edge proxies through zCLI.
 6. Initializes or updates the single repository-managed cluster.
 7. Reconciles networking, mesh, storage, dashboard, identity, and telemetry resources.
-8. Tests the live Zerops resource contract, control-plane failover, actual worker loss and rescheduling, cross-node networking, DNS, ingestion, Kubescape, and full CNCF conformance.
-9. Stores the admin kubeconfig and four Headlamp role tokens as sensitive Zerops project variables.
-10. Leaves a passing cluster running. A failing or canceled run resets partial nested infrastructure.
+8. Creates and verifies etcd and Longhorn backups in Zerops S3-compatible object storage.
+9. Tests the live Zerops resource contract, control-plane failover, actual worker loss and rescheduling, cross-node networking, DNS, ingestion, Kubescape, and optional full CNCF conformance.
+10. Stores the admin kubeconfig and four Headlamp role tokens as sensitive Zerops project variables.
+11. Leaves a passing cluster running. A failed first deployment resets partial nested infrastructure; a failed reconciliation preserves the existing cluster for diagnosis.
 
 Required repository configuration:
 
@@ -35,6 +36,17 @@ Required repository configuration:
 - Variable `ZEROPS_CLIENT_ID`: the owning Zerops client/team ID.
 
 The workflow uses no third-party Actions. GitHub-owned Actions are pinned to full commit SHAs; every other operation is shell plus the Zerops API/zCLI.
+
+## Operations workflows
+
+All cluster-changing workflows share one GitHub concurrency group and verify the Zerops-side repository lock, so a backup, deployment, resize, maintenance roll, or destroy cannot race another operation.
+
+- **Back up Zerops Kubernetes** runs every six hours or on demand. It creates a consistent etcd snapshot and Longhorn system/volume backups in `k8sbackups`, then downloads and checksum-verifies the new etcd object and proves the Longhorn S3 prefix is populated.
+- **Roll Zerops Kubernetes nodes and add-ons** runs weekly or on demand. It requires a successful pre-update backup, drains and rolls workers before control planes one at a time, waits for Longhorn health between disruptions, reconciles pinned add-ons, and runs acceptance checks. It does not silently change the pinned Kubernetes version.
+- **Resize Zerops Kubernetes** runs on demand. It safely changes the fixed dedicated CPU/RAM/disk contract one node at a time and scales between three and four workers. Disk can grow but cannot shrink; scale-in drains workloads and evicts Longhorn replicas before deleting worker four.
+- **Destroy Zerops Kubernetes** is the explicit teardown and cleanup-recovery path.
+
+The backup, rolling-maintenance, vertical up/down, and horizontal up/down paths have each completed successfully against the live project. Sanitized evidence is retained as a GitHub artifact for one day.
 
 ## Recipe import
 

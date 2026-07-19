@@ -30,6 +30,29 @@ For break glass, SSH to its outer Zerops service and inspect the nested node wit
 
 Ensure all workers are Ready, `iscsid` is active, mount propagation is shared, and `/var/lib/longhorn` has free space. Do not delete the last healthy replica. Let rebuilding finish before maintenance.
 
+The nested workers rely on the privileged `longhorn-node-prerequisites` DaemonSet to load the Zerops host's `iscsi_tcp`, `nfs`, and `dm_crypt` kernel modules. Check it before diagnosing an attach failure:
+
+```sh
+kubectl -n kube-system get daemonset/longhorn-node-prerequisites
+kubectl -n kube-system get pods -l app.kubernetes.io/name=longhorn-node-prerequisites -o wide
+kubectl -n longhorn-system get nodes.longhorn.io,replicas.longhorn.io
+```
+
+All desired DaemonSet Pods must be Ready on workers, and each Longhorn worker disk must report Ready. The exception is limited to `kube-system`; application namespaces still enforce restricted Pod Security Admission.
+
+## A backup fails
+
+Check the target and backup resources without printing the generated Secret:
+
+```sh
+kubectl -n longhorn-system get backuptargets.longhorn.io default -o yaml
+kubectl -n longhorn-system get systembackups.longhorn.io
+kubectl -n longhorn-system get backups.longhorn.io
+kubectl -n zerops-backup-validation get pvc,pod
+```
+
+The target must report `available: true`, the latest on-demand SystemBackup must be `Ready`, and the proof-volume backup must be `Completed`. If the target is unavailable, confirm the `k8sbackups` service exists and that its environment keys are wired to the Action; never paste their values into logs. For etcd, inspect the sanitized artifact's status JSON and compare its object key, byte count, and SHA-256 metadata. A missing or mismatched download fails the workflow automatically.
+
 ## Metrics, logs, or traces are missing
 
 - Metrics: inspect Alloy and query `http://prometheus.zerops:9090/-/ready` over the VPN.
