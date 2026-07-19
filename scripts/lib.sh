@@ -228,7 +228,7 @@ set_cluster_tag() {
 }
 
 wait_longhorn_healthy() {
-  local deadline=${1:-$((SECONDS + 1200))} unhealthy
+  local deadline=$((SECONDS + 1200)) unhealthy
   kubectl get crd volumes.longhorn.io >/dev/null 2>&1 || return 0
   while (( SECONDS < deadline )); do
     unhealthy=$(kubectl -n longhorn-system get volumes.longhorn.io -o json | jq \
