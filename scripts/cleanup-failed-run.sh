@@ -9,9 +9,16 @@ require_env ZEROPS_TOKEN ZEROPS_PROJECT_ID GITHUB_REPOSITORY GITHUB_RUN_ID
 state=$(cluster_tag_value state)
 repository=$(cluster_tag_value repository)
 owner_run=$(cluster_tag_value run)
+operation=$(cluster_tag_value operation)
 
 if [[ "$state" != deploying || "${repository,,}" != "${GITHUB_REPOSITORY,,}" || "$owner_run" != "$GITHUB_RUN_ID" ]]; then
   log "cleanup skipped because this run does not own the active deployment lock"
+  exit 0
+fi
+
+if [[ "$operation" == reconcile ]]; then
+  set_cluster_state reconcile-failed "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+  log 'cleanup preserved the pre-existing cluster; reconciliation did not create partial infrastructure'
   exit 0
 fi
 

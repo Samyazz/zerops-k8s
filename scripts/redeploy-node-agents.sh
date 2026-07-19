@@ -4,7 +4,7 @@ ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/lib.sh"
 
-require_env ZEROPS_PROJECT_ID
+require_env ZEROPS_TOKEN ZEROPS_PROJECT_ID
 require zcli
 require curl
 require jq
@@ -23,15 +23,6 @@ restore_cordon() {
 }
 trap restore_cordon EXIT INT TERM
 
-declare -A setups=(
-  [k8sworker1]=worker1
-  [k8sworker2]=worker2
-  [k8sworker3]=worker3
-  [k8sworker4]=worker4
-  [k8scp2]=controlplane2
-  [k8scp3]=controlplane3
-  [k8scp1]=controlplane1
-)
 order=(k8sworker1 k8sworker2 k8sworker3)
 if service_exists k8sworker4; then order+=(k8sworker4); fi
 order+=(k8scp2 k8scp3 k8scp1)
@@ -40,69 +31,53 @@ if (( $# )); then
   targets=("$@")
 fi
 for service in "${targets[@]}"; do
-  [[ -v "setups[$service]" ]] || die "refusing to deploy an unknown node agent: $service"
+  [[ " ${order[*]} " == *" $service "* ]] || die "refusing to roll an unknown node: $service"
 done
 
-version_name="github-${GITHUB_RUN_ID:-local}-${GITHUB_SHA:-working}-node-recovery"
-source_args=(--workspace-state all)
-if [[ ! -d "$ROOT_DIR/.git" ]]; then
-  source_args=(--no-git)
-fi
+init_response=$(agent_request k8scp1 POST /v1/cluster/init)
+ca_hash=$(jq -er .caHash <<<"$init_response")
+join_payload=$(jq -cn --arg hash "$ca_hash" '{caHash:$hash}')
 
 for service in "${order[@]}"; do
   [[ " ${targets[*]} " == *" $service "* ]] || continue
-  setup=${setups[$service]}
   current_service=$service
   current_drained=false
-  restart_node=false
   drained=false
-  if [[ -n "${KUBECONFIG:-}" && -s "${KUBECONFIG:-}" ]] && kubectl get "node/$service" >/dev/null 2>&1; then
+  node_ready=$(kubectl get "node/$service" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+  if [[ "$node_ready" == True ]]; then
     wait_longhorn_healthy
-    log "cordoning and draining $service before its rolling agent update"
+    log "cordoning and draining $service before its rolling node restart"
     kubectl cordon "$service" >/dev/null
     kubectl drain "$service" --ignore-daemonsets --delete-emptydir-data --force \
       --grace-period=120 --timeout=15m >/dev/null
     drained=true
     current_drained=true
-  fi
-  if curl --fail --silent --connect-timeout 3 --max-time 5 "http://${service}:18080/healthz" >/dev/null; then
-    node_state=$(agent_request "$service" GET /v1/state | jq -er '.status')
-    if [[ "$node_state" == running ]]; then
-      log "stopping nested node before deploying its agent: $service"
-      agent_request "$service" POST /v1/node/stop >/dev/null
-      restart_node=true
-    fi
+  elif [[ -n "$node_ready" ]]; then
+    log "removing the stale non-Ready node object before recovering $service"
+    kubectl delete "node/$service" --ignore-not-found >/dev/null
   fi
 
-  log "deploying restart-safe node agent to $service"
-  deployed=false
-  for attempt in 1 2 3; do
-    set +e
-    timeout "${ZEROPS_DEPLOY_TIMEOUT:-35m}" zcli push "$service" -P "$ZEROPS_PROJECT_ID" --setup "$setup" \
-      --version-name "$version_name" --working-dir "$ROOT_DIR" "${source_args[@]}"
-    result=$?
-    set -e
-    if (( result == 0 )); then
-      deployed=true
-      break
-    fi
-    (( result != 124 )) || die "Zerops node-agent deployment timed out for $service"
-    log "node-agent deployment failed on attempt $attempt; retrying $service"
-    sleep 5
-  done
-  [[ "$deployed" == true ]] || die "node-agent deployment failed after three attempts: $service"
-  wait_for_agent "$service"
-  if [[ "$restart_node" == true ]]; then
-    log "restarting nested node after deploying its agent: $service"
-    agent_request "$service" POST /v1/node/start >/dev/null
-    if [[ -n "${KUBECONFIG:-}" && -s "${KUBECONFIG:-}" ]] && kubectl get "node/$service" >/dev/null 2>&1; then
-      kubectl wait "node/$service" --for=condition=Ready --timeout=15m
-      recover_terminating_node_pods "$service"
-    fi
+  log "restarting the nested Kubernetes node: $service"
+  node_state=$(agent_request "$service" GET /v1/state | jq -er '.status')
+  if [[ "$node_state" == running ]]; then
+    agent_request "$service" POST /v1/node/stop >/dev/null
   fi
+  wait_for_agent "$service"
+  agent_request "$service" POST /v1/node/start >/dev/null
+  if [[ "$service" == k8scp1 ]]; then
+    agent_request "$service" POST /v1/cluster/init >/dev/null
+  else
+    agent_request "$service" POST /v1/cluster/join "$join_payload" >/dev/null
+  fi
+  if [[ "$service" == k8sworker* ]]; then
+    kubectl label node "$service" node-role.kubernetes.io/worker='' \
+      node.longhorn.io/create-default-disk=true --overwrite >/dev/null
+  fi
+  kubectl wait "node/$service" --for=condition=Ready --timeout=15m
+  recover_terminating_node_pods "$service"
   if [[ "$drained" == true ]]; then
     kubectl uncordon "$service" >/dev/null
     current_drained=false
-    wait_longhorn_healthy
   fi
+  wait_longhorn_healthy
 done

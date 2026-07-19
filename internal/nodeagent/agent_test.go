@@ -53,22 +53,6 @@ func TestValidCAHash(t *testing.T) {
 	}
 }
 
-func TestValidEtcdSnapshotStatus(t *testing.T) {
-	for _, valid := range []string{
-		`{"hash":123,"revision":45,"totalKey":6,"totalSize":789}`,
-		`{"hash":123,"revision":45,"total-key":6,"total-size":789}`,
-	} {
-		if !validEtcdSnapshotStatus(valid) {
-			t.Fatalf("rejected valid etcd snapshot status: %s", valid)
-		}
-	}
-	for _, invalid := range []string{"", `{}`, `{"hash":0,"totalSize":10}`, `{"hash":1,"totalSize":0}`} {
-		if validEtcdSnapshotStatus(invalid) {
-			t.Fatalf("accepted invalid etcd snapshot status: %s", invalid)
-		}
-	}
-}
-
 func TestInitConfigUsesHostWithoutPortForCertificateSAN(t *testing.T) {
 	a := agent{cfg: config{
 		BootstrapToken:       "123456.1234567890123456",

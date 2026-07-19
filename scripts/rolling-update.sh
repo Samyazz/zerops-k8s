@@ -25,7 +25,7 @@ log 'taking mandatory pre-update etcd and Longhorn backups'
 "$ROOT_DIR/scripts/backup-cluster.sh"
 set_cluster_state updating "${GITHUB_REPOSITORY:-Samyazz/zerops-k8s}" "${GITHUB_RUN_ID:-local}"
 
-log 'rolling the node-agent release and nested node restart one node at a time'
+log 'rolling the nested Kubernetes node restart one node at a time'
 "$ROOT_DIR/scripts/redeploy-node-agents.sh"
 
 log 'reconciling pinned Kubernetes add-ons after the node rollout'

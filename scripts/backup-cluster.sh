@@ -11,24 +11,32 @@ require jq
 require kubectl
 require python3
 
-if [[ -z "${K8S_AGENT_TOKEN:-}" || -z "${K8S_IMAGE_STORAGE_ENDPOINT:-}" ]]; then
+if [[ -z "${K8S_IMAGE_STORAGE_ENDPOINT:-}" ]]; then
   load_zerops_env
 fi
-require_env K8S_AGENT_TOKEN K8S_IMAGE_STORAGE_ENDPOINT K8S_IMAGE_STORAGE_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+require_env K8S_IMAGE_STORAGE_ENDPOINT K8S_IMAGE_STORAGE_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 
 backup_region=${K8S_BACKUP_REGION:-us-west-1}
 backup_prefix=${K8S_BACKUP_PREFIX:-longhorn}
 evidence_dir=${RUNNER_TEMP:-$ROOT_DIR/artifacts}/evidence/backups
 work_dir=$(mktemp -d)
-headers=$work_dir/headers
 snapshot=$work_dir/etcd.db
 downloaded=$work_dir/etcd-remote.db
 metadata=$work_dir/metadata.json
 list_xml=$work_dir/list.xml
 system_backup="zerops-$(date -u +%Y%m%d%H%M%S)-${GITHUB_RUN_ID:-local}"
 system_backup=${system_backup:0:63}
+reader_pod="etcd-backup-reader-${GITHUB_RUN_ID:-local}"
+reader_pod=$(tr '[:upper:]_' '[:lower:]-' <<<"$reader_pod" | tr -cd 'a-z0-9-' | cut -c1-63)
+etcd_snapshot_name="etcd-${GITHUB_RUN_ID:-local}-$(date -u +%s).db"
+etcd_snapshot_path="/var/lib/etcd/zerops-backups/$etcd_snapshot_name"
 mkdir -p "$evidence_dir"
-trap 'rm -rf "$work_dir"' EXIT
+cleanup() {
+  kubectl -n kube-system exec "$reader_pod" -- rm -f "/backup/$etcd_snapshot_name" >/dev/null 2>&1 || true
+  kubectl -n kube-system delete pod "$reader_pod" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  rm -rf "$work_dir"
+}
+trap cleanup EXIT INT TERM
 
 log 'configuring the Longhorn backup target from Zerops object-storage variables'
 kubectl -n longhorn-system create secret generic zerops-s3-backups \
@@ -104,15 +112,62 @@ kubectl -n longhorn-system get backups.longhorn.io -o json \
     '{backups:[.items[] | select(.status.volumeName == $volume) | {name:.metadata.name,state:.status.state,progress:.status.progress,createdAt:.status.backupCreatedAt,size:.status.size}]}' \
   >"$evidence_dir/longhorn-volume-backups.json"
 
-log 'requesting a validated etcd snapshot from the authenticated primary node agent'
-curl --fail --silent --show-error --connect-timeout 10 --max-time 900 \
-  -D "$headers" -o "$snapshot" \
-  -H "Authorization: Bearer $K8S_AGENT_TOKEN" \
-  http://k8scp1:18080/v1/cluster/etcd-snapshot
-[[ -s "$snapshot" ]] || die 'node agent returned an empty etcd snapshot'
+log 'creating and validating a consistent etcd snapshot on k8scp1'
+kubectl -n kube-system delete pod "$reader_pod" --ignore-not-found --wait=true >/dev/null
+kubectl apply -f - >/dev/null <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: $reader_pod
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: zerops-etcd-backup-reader
+spec:
+  nodeName: k8scp1
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  tolerations:
+    - operator: Exists
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: reader
+      image: registry.k8s.io/busybox:1.36.1
+      command: [sh, -c, "sleep 1800"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+      resources:
+        requests: {cpu: 5m, memory: 8Mi}
+        limits: {cpu: 50m, memory: 32Mi}
+      volumeMounts:
+        - name: backup
+          mountPath: /backup
+  volumes:
+    - name: backup
+      hostPath:
+        path: /var/lib/etcd/zerops-backups
+        type: DirectoryOrCreate
+EOF
+kubectl -n kube-system wait pod/"$reader_pod" --for=condition=Ready --timeout=5m
+etcd_pod=$(kubectl -n kube-system get pods -l component=etcd \
+  --field-selector spec.nodeName=k8scp1 -o jsonpath='{.items[0].metadata.name}')
+kubectl -n kube-system exec "$etcd_pod" -- etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt \
+  --key=/etc/kubernetes/pki/etcd/healthcheck-client.key \
+  snapshot save "$etcd_snapshot_path" >/dev/null
+kubectl -n kube-system exec "$etcd_pod" -- etcdutl snapshot status \
+  --write-out=json "$etcd_snapshot_path" \
+  | jq '{hash,revision,totalKey,totalSize}' >"$evidence_dir/etcd-snapshot-status.json"
+reader_sha=$(kubectl -n kube-system exec "$reader_pod" -- sha256sum "/backup/$etcd_snapshot_name" | awk '{print $1}')
+kubectl -n kube-system exec "$reader_pod" -- cat "/backup/$etcd_snapshot_name" >"$snapshot"
+[[ -s "$snapshot" ]] || die 'the etcd snapshot reader returned an empty file'
 local_sha=$(sha256sum "$snapshot" | awk '{print $1}')
-agent_sha=$(awk 'BEGIN{IGNORECASE=1} /^X-Content-SHA256:/{gsub("\\r",""); print $2}' "$headers" | tail -n 1)
-[[ "$local_sha" == "$agent_sha" ]] || die 'etcd snapshot checksum from the node agent did not match'
+[[ "$local_sha" == "$reader_sha" ]] || die 'etcd snapshot checksum changed while streaming from k8scp1'
 
 timestamp=$(date -u +%Y/%m/%d/%Y%m%dT%H%M%SZ)
 object="etcd/${timestamp}-${GITHUB_RUN_ID:-local}.db"

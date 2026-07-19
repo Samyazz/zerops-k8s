@@ -36,9 +36,11 @@ fi
 
 if [[ "$project_state" == running ]]; then
   export RECONCILE_EXISTING=true
+  set_cluster_tag operation reconcile
   log 'existing repository-managed cluster detected; reconciling it in place'
 else
   export RECONCILE_EXISTING=false
+  set_cluster_tag operation create
 fi
 
 zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
