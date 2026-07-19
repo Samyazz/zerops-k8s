@@ -49,12 +49,20 @@ if (( ${#interrupted_backups[@]} > 0 )); then
     --ignore-not-found --wait=true >/dev/null
 fi
 
+for service in "${targets[@]}"; do
+  if [[ "$service" == k8sworker* ]] && longhorn_disk_is_empty "$service"; then
+    log "repairing an empty Longhorn disk definition before rolling $service"
+    wait_longhorn_disk_ready "$service"
+  fi
+done
+
 for service in "${order[@]}"; do
   [[ " ${targets[*]} " == *" $service "* ]] || continue
   current_service=$service
   current_drained=false
   drained=false
   disk_replacement=false
+  stale_node=false
   if [[ "$service" == k8sworker* ]] && longhorn_disk_needs_replacement "$service"; then
     disk_replacement=true
   fi
@@ -67,8 +75,7 @@ for service in "${order[@]}"; do
     drained=true
     current_drained=true
   elif [[ -n "$node_ready" ]]; then
-    log "removing the stale non-Ready node object before recovering $service"
-    kubectl delete "node/$service" --ignore-not-found >/dev/null
+    stale_node=true
   fi
 
   log "restarting the nested Kubernetes node: $service"
@@ -79,6 +86,10 @@ for service in "${order[@]}"; do
   if [[ "$disk_replacement" == true ]]; then
     repair_replaced_longhorn_disk "$service"
   fi
+  if [[ "$stale_node" == true ]]; then
+    log "removing the stale non-Ready node object before recovering $service"
+    kubectl delete "node/$service" --ignore-not-found >/dev/null
+  fi
   wait_for_agent "$service"
   agent_request "$service" POST /v1/node/start >/dev/null
   if [[ "$service" == k8scp1 ]]; then
@@ -86,6 +97,11 @@ for service in "${order[@]}"; do
   else
     agent_request "$service" POST /v1/cluster/join "$join_payload" >/dev/null
   fi
+  deadline=$((SECONDS + 300))
+  until kubectl get "node/$service" >/dev/null 2>&1; do
+    (( SECONDS < deadline )) || die "node did not register after restart: $service"
+    sleep 3
+  done
   if [[ "$service" == k8sworker* ]]; then
     kubectl label node "$service" node-role.kubernetes.io/worker='' \
       node.longhorn.io/create-default-disk=true --overwrite >/dev/null

@@ -281,7 +281,12 @@ repair_replaced_longhorn_disk() {
   kubectl -n longhorn-system patch "nodes.longhorn.io/$node" --type=merge \
     -p '{"spec":{"allowScheduling":false}}' >/dev/null
   kubectl -n longhorn-system delete "nodes.longhorn.io/$node" --wait=true >/dev/null
-  kubectl label node "$node" node.longhorn.io/create-default-disk=true --overwrite >/dev/null
+}
+
+longhorn_disk_is_empty() {
+  local node=$1
+  kubectl -n longhorn-system get "nodes.longhorn.io/$node" -o json 2>/dev/null | jq -e \
+    '(.spec.disks // {}) | length == 0' >/dev/null
 }
 
 longhorn_disk_needs_replacement() {
@@ -300,8 +305,22 @@ longhorn_disk_needs_replacement() {
 }
 
 wait_longhorn_disk_ready() {
-  local node=$1 deadline=$((SECONDS + 600)) ready
+  local node=$1 deadline=$((SECONDS + 600)) ready disk_count capacity capacity_kib percentage reserved payload
   while (( SECONDS < deadline )); do
+    disk_count=$(kubectl -n longhorn-system get "nodes.longhorn.io/$node" -o json 2>/dev/null | jq \
+      '(.spec.disks // {}) | length' 2>/dev/null || true)
+    if [[ "$disk_count" == 0 ]]; then
+      capacity=$(kubectl get "node/$node" -o jsonpath='{.status.capacity.ephemeral-storage}' 2>/dev/null || true)
+      percentage=$(kubectl -n longhorn-system get settings.longhorn.io \
+        storage-reserved-percentage-for-default-disk -o jsonpath='{.value}' 2>/dev/null || true)
+      capacity_kib=${capacity%Ki}
+      if [[ "$capacity" =~ ^[0-9]+Ki$ && "$percentage" =~ ^[0-9]+$ ]]; then
+        reserved=$((capacity_kib * 1024 * percentage / 100))
+        payload=$(jq -cn --argjson reserved "$reserved" '{spec:{allowScheduling:true,disks:{"default-disk-zerops":{allowScheduling:true,diskDriver:"",diskType:"filesystem",evictionRequested:false,path:"/var/lib/longhorn/",storageReserved:$reserved,tags:[]}}}}')
+        log "configuring a default Longhorn disk on $node"
+        kubectl -n longhorn-system patch "nodes.longhorn.io/$node" --type=merge -p "$payload" >/dev/null
+      fi
+    fi
     ready=$(kubectl -n longhorn-system get "nodes.longhorn.io/$node" -o json 2>/dev/null | jq -r \
       '[.status.diskStatus[]?.conditions[]? | select(.type == "Ready") | .status] | first // ""')
     [[ "$ready" == True ]] && return 0
