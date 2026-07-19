@@ -153,7 +153,7 @@ spec:
       type: RuntimeDefault
   containers:
     - name: reader
-      image: registry.k8s.io/busybox:1.36.1
+      image: busybox:1.36.1
       command: [sh, -c, "sleep 1800"]
       securityContext:
         allowPrivilegeEscalation: false
