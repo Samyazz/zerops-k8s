@@ -17,11 +17,16 @@ while read -r service setup; do
   log "deploying restart-safe node agent to $service"
   deployed=false
   for attempt in 1 2 3; do
-    if zcli push "$service" -P "$ZEROPS_PROJECT_ID" --setup "$setup" \
-      --version-name "$version_name" --working-dir "$ROOT_DIR" "${source_args[@]}"; then
+    set +e
+    timeout "${ZEROPS_DEPLOY_TIMEOUT:-35m}" zcli push "$service" -P "$ZEROPS_PROJECT_ID" --setup "$setup" \
+      --version-name "$version_name" --working-dir "$ROOT_DIR" "${source_args[@]}"
+    result=$?
+    set -e
+    if (( result == 0 )); then
       deployed=true
       break
     fi
+    (( result != 124 )) || die "Zerops node-agent deployment timed out for $service"
     log "node-agent deployment failed on attempt $attempt; retrying $service"
     sleep 5
   done

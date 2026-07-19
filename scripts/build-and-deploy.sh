@@ -50,10 +50,15 @@ deploy_one() {
   fi
   log "deploying $service with setup $setup"
   for attempt in 1 2 3; do
-    if zcli push "$service" -P "$ZEROPS_PROJECT_ID" --setup "$setup" \
-      --version-name "$version_name" --working-dir "$ROOT_DIR" "${source_args[@]}"; then
+    set +e
+    timeout "${ZEROPS_DEPLOY_TIMEOUT:-35m}" zcli push "$service" -P "$ZEROPS_PROJECT_ID" --setup "$setup" \
+      --version-name "$version_name" --working-dir "$ROOT_DIR" "${source_args[@]}"
+    result=$?
+    set -e
+    if (( result == 0 )); then
       return 0
     fi
+    (( result != 124 )) || die "Zerops deployment timed out for $service; recover its in-flight process through the destroy workflow"
     log "deployment upload for $service failed on attempt $attempt; retrying"
     sleep 5
   done

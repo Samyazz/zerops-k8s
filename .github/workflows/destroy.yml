@@ -2,6 +2,11 @@ name: Destroy Zerops Kubernetes
 
 on:
   workflow_dispatch:
+    inputs:
+      stuck_process_id:
+        description: Optional in-flight Kubernetes node process to cancel before recovery
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -18,6 +23,7 @@ jobs:
     env:
       ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      STUCK_PROCESS_ID: ${{ inputs.stuck_process_id }}
     steps:
       - name: Check out source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -32,5 +38,6 @@ jobs:
           zcli login "$ZEROPS_TOKEN"
           zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
           trap 'zcli vpn down >/dev/null 2>&1 || true' EXIT
+          [[ -z "$STUCK_PROCESS_ID" ]] || ./scripts/cancel-process.sh "$STUCK_PROCESS_ID"
           ./scripts/redeploy-node-agents.sh
           ./scripts/destroy-cluster.sh
