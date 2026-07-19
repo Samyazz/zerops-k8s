@@ -21,6 +21,8 @@ services:
   - hostname: k8scp1
     type: docker@26.1.5
     startWithoutCode: true
+    minContainers: 1
+    maxContainers: 1
     envSecrets:
       K8S_AGENT_TOKEN: <@generateRandomString(<64>)>
       # kubeadm requires exactly [a-z0-9]{6}.[a-z0-9]{16}. Integer
@@ -42,6 +44,8 @@ services:
   - hostname: k8scp2
     type: docker@26.1.5
     startWithoutCode: true
+    minContainers: 1
+    maxContainers: 1
     verticalAutoscaling: &controlPlaneResources
       cpuMode: DEDICATED
       minCpu: 4
@@ -56,11 +60,15 @@ services:
   - hostname: k8scp3
     type: docker@26.1.5
     startWithoutCode: true
+    minContainers: 1
+    maxContainers: 1
     verticalAutoscaling: *controlPlaneResources
 
   - hostname: k8sworker1
     type: docker@26.1.5
     startWithoutCode: true
+    minContainers: 1
+    maxContainers: 1
     verticalAutoscaling: &workerResources
       cpuMode: DEDICATED
       minCpu: 4
@@ -75,11 +83,15 @@ services:
   - hostname: k8sworker2
     type: docker@26.1.5
     startWithoutCode: true
+    minContainers: 1
+    maxContainers: 1
     verticalAutoscaling: *workerResources
 
   - hostname: k8sworker3
     type: docker@26.1.5
     startWithoutCode: true
+    minContainers: 1
+    maxContainers: 1
     verticalAutoscaling: *workerResources
 
   - hostname: k8sedge

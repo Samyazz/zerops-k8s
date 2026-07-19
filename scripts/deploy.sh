@@ -41,14 +41,22 @@ else
   export RECONCILE_EXISTING=false
 fi
 
-set_cluster_state deploying "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
-
-"$ROOT_DIR/scripts/provision-observability.sh"
-"$ROOT_DIR/scripts/build-and-deploy.sh"
-
 zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
 vpn_connected=true
+if [[ "$RECONCILE_EXISTING" == true ]]; then
+  export KUBECONFIG="${RUNNER_TEMP:-$ROOT_DIR/artifacts}/pre-reconcile-kubeconfig"
+  agent_request k8scp1 GET /v1/cluster/kubeconfig > "$KUBECONFIG"
+  sed -i 's#^[[:space:]]*server:.*#    server: https://k8sedge.zerops:6443#' "$KUBECONFIG"
+  chmod 0600 "$KUBECONFIG"
+  kubectl get --raw=/readyz >/dev/null
+fi
+
+set_cluster_state deploying "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+
 cluster_touched=true
+"$ROOT_DIR/scripts/reconcile-node-resources.sh"
+"$ROOT_DIR/scripts/provision-observability.sh"
+"$ROOT_DIR/scripts/build-and-deploy.sh"
 
 export KUBECONFIG="${RUNNER_TEMP:-$ROOT_DIR/artifacts}/kubeconfig"
 "$ROOT_DIR/scripts/cluster-bootstrap.sh"

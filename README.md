@@ -18,14 +18,15 @@ The design intentionally treats Zerops as the infrastructure layer and Kubernete
 The repository owner runs **Deploy Zerops Kubernetes** from GitHub's Actions page. It is deliberately `workflow_dispatch` only. The deployment workflow:
 
 1. Uses GitHub concurrency and a Zerops-side repository/run lock.
-2. Reconciles Zerops' first-class observability recipes in the existing project.
-3. Builds the pinned Ubuntu node image and uploads the archive plus checksum to private Zerops object storage.
-4. Deploys the node agents and redundant edge proxies through zCLI.
-5. Initializes or updates the single repository-managed cluster.
-6. Reconciles networking, mesh, storage, dashboard, identity, and telemetry resources.
-7. Tests control-plane failover, actual worker loss and rescheduling, cross-node networking, DNS, ingestion, Kubescape, and full CNCF conformance.
-8. Stores the admin kubeconfig and four Headlamp role tokens as sensitive Zerops project variables.
-9. Leaves a passing cluster running. A failing or canceled run resets partial nested infrastructure.
+2. Reconciles and verifies all six node services through the Zerops API: exactly one VM each, dedicated 4-vCPU mode, 8/12 GB RAM, and 20/50 GB disk with fixed minimum and maximum values.
+3. Reconciles Zerops' first-class observability recipes in the existing project.
+4. Builds the pinned Ubuntu node image and uploads the archive plus checksum to private Zerops object storage.
+5. Deploys the node agents and redundant edge proxies through zCLI.
+6. Initializes or updates the single repository-managed cluster.
+7. Reconciles networking, mesh, storage, dashboard, identity, and telemetry resources.
+8. Tests the live Zerops resource contract, control-plane failover, actual worker loss and rescheduling, cross-node networking, DNS, ingestion, Kubescape, and full CNCF conformance.
+9. Stores the admin kubeconfig and four Headlamp role tokens as sensitive Zerops project variables.
+10. Leaves a passing cluster running. A failing or canceled run resets partial nested infrastructure.
 
 Required repository configuration:
 

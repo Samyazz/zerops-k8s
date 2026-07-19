@@ -5,7 +5,7 @@ ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/lib.sh"
 
-require_env KUBECONFIG ZEROPS_PROJECT_ID
+require_env KUBECONFIG ZEROPS_PROJECT_ID ZEROPS_TOKEN
 artifact_dir=${RUNNER_TEMP:-$ROOT_DIR/artifacts}/evidence
 mkdir -p "$artifact_dir"
 
@@ -80,6 +80,9 @@ wait_metric() {
 
 load_zerops_env
 require_env K8S_AGENT_TOKEN ELASTICSEARCH_PASSWORD
+
+log 'checking Zerops node resource contract'
+"$ROOT_DIR/scripts/verify-node-resources.sh" "$artifact_dir/zerops-node-resources.json"
 
 log 'validating repository manifests'
 kubeconform -strict -summary -ignore-missing-schemas \
