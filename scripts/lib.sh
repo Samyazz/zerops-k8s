@@ -262,15 +262,8 @@ safe_drain() {
 }
 
 repair_replaced_longhorn_disk() {
-  local node=$1 reason replicas deadline ready
+  local node=$1 replicas deadline ready
   kubectl -n longhorn-system get "nodes.longhorn.io/$node" >/dev/null 2>&1 || return 0
-  reason=$(kubectl -n longhorn-system get "nodes.longhorn.io/$node" -o json | jq -r '
-    [.status.diskStatus[]?.conditions[]?
-      | select(.type == "Ready" and .status == "False")
-      | .reason
-    ] | first // ""
-  ')
-  [[ "$reason" == DiskFilesystemChanged ]] || return 0
 
   replicas=$(kubectl -n longhorn-system get replicas.longhorn.io -o json | jq \
     --arg node "$node" '[.items[] | select(.spec.nodeID == $node)] | length')
@@ -294,8 +287,15 @@ repair_replaced_longhorn_disk() {
 longhorn_disk_needs_replacement() {
   local node=$1
   kubectl -n longhorn-system get "nodes.longhorn.io/$node" -o json 2>/dev/null | jq -e '
-    any(.status.diskStatus[]?.conditions[]?;
-      .type == "Ready" and .status == "False" and .reason == "DiskFilesystemChanged")
+    any(.status.diskStatus[]?;
+      any(.conditions[]?;
+        .type == "Ready" and .status == "False" and .reason == "DiskFilesystemChanged")
+      or (
+        .storageMaximum == 0
+        and any(.conditions[]?;
+          .type == "Ready" and .status == "False" and .reason == "NodeNotReady")
+      )
+    )
   ' >/dev/null
 }
 
