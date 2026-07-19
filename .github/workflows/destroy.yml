@@ -32,4 +32,5 @@ jobs:
           zcli login "$ZEROPS_TOKEN"
           zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
           trap 'zcli vpn down >/dev/null 2>&1 || true' EXIT
+          ./scripts/redeploy-node-agents.sh
           ./scripts/destroy-cluster.sh

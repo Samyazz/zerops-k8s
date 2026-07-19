@@ -116,6 +116,9 @@ func (a *agent) startNode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *agent) startNodeLocked(ctx context.Context) error {
+	if err := a.ensureHostMountPropagation(ctx); err != nil {
+		return err
+	}
 	state, _ := a.containerState(ctx)
 	switch state {
 	case "running":
@@ -157,6 +160,19 @@ func (a *agent) startNodeLocked(ctx context.Context) error {
 		return err
 	}
 	return a.ensureNestedNodeReady(ctx, true)
+}
+
+// Zerops Docker services run inside an outer VM. A VM resource change can
+// restart that VM without replaying the deployed initCommands, which resets
+// mount propagation to private. Nested kubelet and Longhorn mounts require
+// both the outer root and its separate sysfs mount to be recursively shared.
+func (a *agent) ensureHostMountPropagation(ctx context.Context) error {
+	for _, target := range []string{"/", "/sys"} {
+		if _, err := a.runner.run(ctx, "sudo", []string{"mount", "--make-rshared", target}, ""); err != nil {
+			return fmt.Errorf("make outer mount recursively shared (%s): %w", target, err)
+		}
+	}
+	return nil
 }
 
 // terminateOrphanedPodProcesses is a recovery path for an unclean wrapper
@@ -441,6 +457,10 @@ func (a *agent) joinCluster(w http.ResponseWriter, r *http.Request) {
 func (a *agent) resetCluster(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if err := a.ensureHostMountPropagation(r.Context()); err != nil {
+		writeError(w, err)
+		return
+	}
 	state, _ := a.containerState(r.Context())
 	if state != "missing" {
 		if state != "running" {
