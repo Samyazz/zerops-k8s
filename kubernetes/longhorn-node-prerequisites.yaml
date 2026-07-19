@@ -27,12 +27,16 @@ spec:
             - -ec
             - |
               apk add --no-cache kmod
-              modprobe iscsi_tcp
+              for module in iscsi_tcp nfs dm_crypt; do
+                modprobe "$module"
+              done
               test -d /sys/module/iscsi_tcp
+              test -d /sys/module/nfs
+              test -d /sys/module/dm_crypt
               exec sleep 2147483647
           readinessProbe:
             exec:
-              command: [test, -d, /sys/module/iscsi_tcp]
+              command: [sh, -ec, "test -d /sys/module/iscsi_tcp && test -d /sys/module/nfs && test -d /sys/module/dm_crypt"]
             initialDelaySeconds: 1
             periodSeconds: 10
           securityContext:

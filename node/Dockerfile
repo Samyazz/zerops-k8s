@@ -11,7 +11,9 @@ RUN apt-get update \
         apt-transport-https \
         ca-certificates \
         conntrack \
+        cryptsetup \
         curl \
+        dmsetup \
         ebtables \
         ethtool \
         gnupg \
