@@ -111,7 +111,7 @@ scale_node() {
 }
 
 add_fourth_worker() {
-  local import_file version_name init_response ca_hash
+  local import_file version_name init_response ca_hash deadline
   log 'horizontally scaling from three workers to four'
   import_file=$(mktemp)
   sed -n '1,1p' "$ROOT_DIR/import.yaml" >"$import_file"
@@ -144,6 +144,11 @@ add_fourth_worker() {
   init_response=$(agent_request k8scp1 POST /v1/cluster/init)
   ca_hash=$(jq -er .caHash <<<"$init_response")
   agent_request k8sworker4 POST /v1/cluster/join "$(jq -cn --arg hash "$ca_hash" '{caHash:$hash}')" >/dev/null
+  deadline=$((SECONDS + 300))
+  until kubectl get node/k8sworker4 >/dev/null 2>&1; do
+    (( SECONDS < deadline )) || die 'k8sworker4 did not register after joining the cluster'
+    sleep 3
+  done
   kubectl label node k8sworker4 node-role.kubernetes.io/worker='' node.longhorn.io/create-default-disk=true --overwrite
   kubectl wait node/k8sworker4 --for=condition=Ready --timeout=15m
   kubectl -n calico-system wait pod -l k8s-app=calico-node \
@@ -154,6 +159,7 @@ add_fourth_worker() {
     --field-selector spec.nodeName=k8sworker4 --for=condition=Ready --timeout=10m
   kubectl -n longhorn-system wait pod -l app=longhorn-manager \
     --field-selector spec.nodeName=k8sworker4 --for=condition=Ready --timeout=10m
+  wait_longhorn_disk_ready k8sworker4
   wait_longhorn_healthy
   refresh_inventory
 }

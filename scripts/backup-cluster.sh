@@ -56,6 +56,7 @@ kubectl -n longhorn-system patch settings.longhorn.io allow-recurring-job-while-
 kubectl apply -f "$ROOT_DIR/kubernetes/longhorn-backups.yaml" >/dev/null
 kubectl -n zerops-backup-validation wait pvc/longhorn-backup-proof \
   --for=jsonpath='{.status.phase}'=Bound --timeout=10m
+kubectl -n zerops-backup-validation rollout status deployment/longhorn-backup-proof --timeout=10m
 
 deadline=$((SECONDS + 600))
 until [[ $(kubectl -n longhorn-system get backuptargets.longhorn.io default -o jsonpath='{.status.available}') == true ]]; do
