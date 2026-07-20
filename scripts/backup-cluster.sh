@@ -260,10 +260,11 @@ kubectl -n kube-system exec "$reader_pod" -- sh -ec '
   mkdir -p "$staging"
   for path in pki manifests admin.conf controller-manager.conf scheduler.conf kubelet.conf encryption-config.yaml audit-policy.yaml; do
     test -e "/control-plane/$path"
-    cp -a "/control-plane/$path" "$staging/"
+    cp -R "/control-plane/$path" "$staging/"
   done
-  if test -f /control-plane/zerops-init.yaml; then cp -a /control-plane/zerops-init.yaml "$staging/"; fi
+  if test -f /control-plane/zerops-init.yaml; then cp /control-plane/zerops-init.yaml "$staging/"; fi
   cp /tmp/recovery-manifest.json "$staging/"
+  chmod -R go-rwx "$staging"
   tar -C "$staging" -czf - .
 ' | age -r "$K8S_RECOVERY_AGE_RECIPIENT" -o "$recovery_bundle"
 [[ -s "$recovery_bundle" ]] || die 'encrypted control-plane recovery bundle is empty'
