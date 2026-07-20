@@ -34,6 +34,11 @@ recovery_bundle=$work_dir/control-plane.tar.age
 recovery_downloaded=$work_dir/control-plane-remote.tar.age
 recovery_metadata=$work_dir/control-plane.json
 list_xml=$work_dir/list.xml
+object=
+recovery_object=
+s3_base=
+s3_args=()
+recovery_set_committed=false
 system_backup="zerops-$(date -u +%Y%m%d%H%M%S)-${GITHUB_RUN_ID:-local}"
 system_backup=${system_backup:0:63}
 reader_pod="etcd-backup-reader-${GITHUB_RUN_ID:-local}"
@@ -42,8 +47,15 @@ etcd_snapshot_name="etcd-${GITHUB_RUN_ID:-local}-$(date -u +%s).db"
 etcd_snapshot_path="/var/lib/etcd/zerops-backups/$etcd_snapshot_name"
 mkdir -p "$evidence_dir"
 cleanup() {
+  local status=$? partial
   kubectl -n kube-system exec "$reader_pod" -- rm -f "/backup/$etcd_snapshot_name" >/dev/null 2>&1 || true
   kubectl -n kube-system delete pod "$reader_pod" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  if (( status != 0 )) && [[ "$recovery_set_committed" != true && -n "$s3_base" ]]; then
+    for partial in "$object" "$object.json" "$recovery_object" "$recovery_object.json"; do
+      [[ -n "$partial" && "$partial" != .json ]] || continue
+      curl "${s3_args[@]}" -X DELETE "$s3_base/$partial" >/dev/null 2>&1 || true
+    done
+  fi
   rm -rf "$work_dir"
 }
 trap cleanup EXIT INT TERM
@@ -193,6 +205,9 @@ spec:
         allowPrivilegeEscalation: false
         capabilities:
           drop: [ALL]
+          # The persisted kubeadm directory is 0700 and owned by the nested
+          # node UID. Grant read/traverse only; the hostPath remains read-only.
+          add: [DAC_READ_SEARCH]
       resources:
         requests: {cpu: 5m, memory: 8Mi}
         limits: {cpu: 50m, memory: 32Mi}
@@ -290,9 +305,10 @@ curl "${s3_args[@]}" -o "$recovery_downloaded" "$s3_base/$recovery_object"
 remote_recovery_sha=$(sha256sum "$recovery_downloaded" | awk '{print $1}')
 [[ "$remote_recovery_sha" == "$recovery_sha" ]] \
   || die 'downloaded control-plane recovery bundle checksum did not match'
-curl "${s3_args[@]}" -H 'Content-Type: application/json' -T "$metadata" "$s3_base/$object.json"
 curl "${s3_args[@]}" -H 'Content-Type: application/json' \
   -T "$recovery_metadata" "$s3_base/$recovery_object.json"
+curl "${s3_args[@]}" -H 'Content-Type: application/json' -T "$metadata" "$s3_base/$object.json"
+recovery_set_committed=true
 install -m 0600 "$metadata" "$evidence_dir/etcd-backup.json"
 install -m 0600 "$recovery_metadata" "$evidence_dir/control-plane-recovery.json"
 

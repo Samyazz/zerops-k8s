@@ -55,7 +55,7 @@ Scaling to four creates `k8sworker4`, deploys the agent, joins and labels the no
 
 - Prometheus snapshots run hourly and keep four object-storage copies.
 - **Back up Zerops Kubernetes** runs at minute 23 every six hours and can also be started manually by the repository owner.
-- Each run creates a consistent stacked-etcd snapshot on `k8scp1`, checks it with `etcdutl`, uploads it beneath `etcd/YYYY/MM/DD/`, downloads it again, and only then uploads its verified-success metadata.
+- Each run creates a consistent stacked-etcd snapshot on `k8scp1`, checks it with `etcdutl`, uploads it beneath `etcd/YYYY/MM/DD/`, downloads it again, and only then uploads the snapshot's verified-success commit marker after the encrypted bundle metadata exists. A failed/cancelled run removes only its own uncommitted objects.
 - The matching `control-plane/YYYY/MM/DD/` object is an age/X25519-encrypted archive containing Kubernetes PKI, service-account signing keys, static manifests, kubeconfigs, the API encryption configuration, and an exact node/etcd version manifest. The Action round-trip verifies the encrypted object without exposing its plaintext or private identity.
 - The same run configures Longhorn's target beneath `longhorn/`, creates a `SystemBackup` with `volumeBackupPolicy: always`, and requires both `Ready` system-backup state and a completed backup of a real proof PVC. S3 credentials are created at runtime from Zerops object-storage variables and are never stored in Git.
 - Longhorn recurring volume backups run at minute 17 every six hours and recurring system backups at minute 47. Each recurring job and the Action-created `zerops-*` SystemBackups retain eight records.
