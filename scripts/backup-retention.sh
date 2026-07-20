@@ -128,11 +128,20 @@ object_storage_settings() {
   jq -e --arg serviceId "$service_id" '. + {serviceId:$serviceId}' "$settings"
 }
 
+read_zerops_quota_env() {
+  local quota
+  quota=$(zcli project env -P "$ZEROPS_PROJECT_ID" \
+    --template '{{if eq .Key "k8sbackups_quotaGBytes"}}{{.Value}}{{end}}' 2>/dev/null \
+    | sed '/^[[:space:]]*$/d' | tail -n 1 | tr -d '"[:space:]')
+  [[ "$quota" =~ ^[0-9]+$ && "$quota" -gt 0 ]] \
+    || die 'could not determine the k8sbackups object-storage quota'
+  printf '%s\n' "$quota"
+}
+
 ensure_object_storage_quota() {
   local settings current service_id payload response deadline
   settings=$(object_storage_settings)
-  current=$(jq -er '.diskGBytes' <<<"$settings")
-  [[ "$current" =~ ^[0-9]+$ ]] || die 'Zerops returned an invalid object-storage quota'
+  current=$(read_zerops_quota_env)
   (( current < desired_quota_gb )) || return 0
 
   service_id=$(jq -er '.serviceId' <<<"$settings")
@@ -150,8 +159,7 @@ ensure_object_storage_quota() {
 
   deadline=$((SECONDS + 1200))
   while (( SECONDS < deadline )); do
-    settings=$(object_storage_settings)
-    current=$(jq -er '.diskGBytes' <<<"$settings")
+    current=$(read_zerops_quota_env)
     (( current >= desired_quota_gb )) && return 0
     sleep 5
   done
@@ -159,19 +167,7 @@ ensure_object_storage_quota() {
 }
 
 read_quota_gb() {
-  local quota='' settings
-  if [[ -n "${ZEROPS_TOKEN:-}" ]]; then
-    settings=$(object_storage_settings)
-    quota=$(jq -er '.diskGBytes' <<<"$settings")
-  fi
-  if [[ ! "$quota" =~ ^[0-9]+$ ]]; then
-    quota=$(zcli project env -P "$ZEROPS_PROJECT_ID" \
-      --template '{{if eq .Key "k8sbackups_quotaGBytes"}}{{.Value}}{{end}}' 2>/dev/null \
-      | sed '/^[[:space:]]*$/d' | tail -n 1 | tr -d '"[:space:]')
-  fi
-  [[ "$quota" =~ ^[0-9]+$ && "$quota" -gt 0 ]] \
-    || die 'could not determine the k8sbackups object-storage quota'
-  printf '%s\n' "$quota"
+  read_zerops_quota_env
 }
 
 ensure_object_storage_quota

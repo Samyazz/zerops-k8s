@@ -48,6 +48,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+log 'cluster lock and recovery encryption settings validated; enforcing backup capacity'
 "$ROOT_DIR/scripts/backup-retention.sh" pre-backup
 
 log 'ensuring the nested workers expose the Longhorn iSCSI frontend prerequisite'
