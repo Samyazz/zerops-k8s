@@ -2,15 +2,15 @@
 
 Ubuntu security updates are applied automatically inside the nested nodes, excluding kubelet, kubeadm, kubectl, and containerd. **Roll Zerops Kubernetes nodes and add-ons** runs every Monday and can be triggered manually; it takes verified backups, rolls the existing pinned nodes one at a time, and reapplies the repository-managed cluster and observability configuration. Every clean deployment rebuilds the pinned node image so replacement nodes also include current security packages.
 
-Kubernetes and core add-ons are intentionally pinned in [`versions.env`](../versions.env). Automatic unreviewed Kubernetes minor upgrades are unsafe for stacked etcd, CNI, mesh, and storage, so Kubernetes upgrades use a controlled workflow:
+Kubernetes and core add-ons are intentionally pinned in [`versions.env`](../versions.env). Automatic unreviewed Kubernetes minor upgrades are unsafe for stacked etcd, CNI, mesh, and storage, so **Upgrade Zerops Kubernetes version** is manual and fail-closed:
 
-1. Update one component/version at a time in `versions.env`, the node Dockerfile arguments, and any matching image/chart references.
-2. Read that component's compatibility and upgrade notes.
-3. Run **Back up Zerops Kubernetes** and require both the verified etcd object and a `Ready` Longhorn system backup before changing a node.
-4. Run static validation and the regular deployment with full conformance.
-5. Upgrade control planes one at a time, then workers one at a time. Keep kubelet no newer than the API server.
-6. Confirm all Grafana dashboards and ELK/APM ingestion after each phase.
+1. Update `KUBERNETES_VERSION` and `KUBERNETES_PACKAGE_VERSION` together, plus the matching `import.yaml` node-image variables. Do not skip a minor version or downgrade.
+2. Review Kubernetes, Calico, Istio, Longhorn, and Gateway API compatibility. Add the exact reviewed tuple to [`upgrade-policy.json`](../upgrade-policy.json); the workflow rejects an unlisted or mismatched tuple.
+3. Dispatch the workflow with `confirm_target` exactly equal to `v<KUBERNETES_VERSION>` and leave `plan_only` enabled. The workflow deploys the authenticated fixed-operation agent when needed, creates and restores a fresh recovery point, builds/uploads the exact replacement image, installs the target kubeadm only on the primary, and requires `kubeadm upgrade plan` to pass.
+4. Review the sanitized plan/recovery evidence. Dispatch the same commit and target with `plan_only` disabled.
+5. The workflow upgrades `k8scp1`, `k8scp2`, and `k8scp3` serially, then every worker serially. Each node is cordoned/drained, each kubelet is verified at the target before uncordon, API readiness and Longhorn health gate every transition, and a partial retry skips already-upgraded nodes.
+6. After all nodes pass, the workflow persists the new Zerops `K8S_VERSION`, node-image tag/object/checksum contract, reconciles the compatibility-approved add-ons, and runs acceptance plus optional full CNCF conformance.
 
-The maintenance workflow intentionally refuses a kubelet version that differs from `versions.env`; it does not implement an arbitrary version input. For Kubernetes minor versions, add and review a sequential `kubeadm upgrade plan/apply/node` change in a dedicated branch. Do not skip minors. Calico must explicitly list the target Kubernetes release as tested; Istio must list it as supported; Longhorn must satisfy its Kubernetes and host prerequisites.
+The target is never taken from an unrestricted workflow input: the confirmation must match the reviewed repository pin. The agent accepts only canonical patch versions, the same minor or exactly the next minor, and the matching pinned Debian package. Its API exposes no generic command execution. A failed apply sets the Zerops lock to `upgrade-failed`; every other mutating workflow remains blocked until the same controlled workflow safely resumes. Kubernetes/etcd downgrade is not used as rollback.
 
-Rollback application/add-on manifests through Git. Kubernetes/etcd downgrades are not a routine rollback mechanism; restore into fresh nodes from a known-good etcd snapshot when a control-plane upgrade cannot be repaired.
+Rollback application/add-on manifests through Git. When a control-plane upgrade cannot be repaired, use the fresh verified etcd and encrypted identity recovery set to restore compatible fresh nodes. Never run a Kubernetes or etcd downgrade over the failed cluster.

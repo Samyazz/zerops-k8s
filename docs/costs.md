@@ -9,8 +9,8 @@ This demonstration is intentionally large. Using the Zerops list prices checked 
 
 The default node subtotal is about **$345/30 days**. Enabling `k8sworker4` adds about **$65/30 days**, making the seven-node subtotal about **$410/30 days**. Different resize inputs change these figures directly.
 
-The two small edge replicas, Serious core, object storage, PostgreSQL, Elasticsearch, and the Prometheus/Grafana/ELK runtimes bring a realistic default demonstration total to roughly **$400–$500+ per 30 days**, depending on the observability services' actual scaling, disk use, and retained backup volume. A four-worker or vertically upsized cluster costs more.
+The two small edge replicas, Serious core, the 25 GB private Kubernetes recovery bucket, PostgreSQL, Elasticsearch, and the Prometheus/Grafana/ELK runtimes bring a realistic default demonstration total to roughly **$400–$500+ per 30 days**, depending on the observability services' actual scaling, disk use, and retained backup volume. A four-worker or vertically upsized cluster costs more.
 
-Billing is minute-based, so stop/delete unneeded outer services after evaluation. The nested destroy workflow clears Kubernetes state but intentionally leaves its outer Zerops services, so it does not by itself eliminate their resource charges. Object storage is inexpensive, but etcd objects are not automatically pruned and Elasticsearch disk/RAM can grow. Set a daily spending warning in Zerops.
+Billing is minute-based, so stop/delete unneeded outer services after evaluation. The nested destroy workflow clears Kubernetes state but intentionally leaves its outer Zerops services, so it does not by itself eliminate their resource charges. Object storage is inexpensive, but retained tiered recovery points and Elasticsearch disk/RAM can still grow. Set a daily spending warning in Zerops.
 
 Always recalculate using the current [Zerops pricing page](https://docs.zerops.io/company/pricing); this document is an estimate, not a quote.

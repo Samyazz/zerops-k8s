@@ -3,6 +3,7 @@
 - Node lifecycle endpoints are private, bearer-authenticated, and expose fixed operations rather than a generic shell.
 - The node image archive is private and verified with SHA-256 before loading.
 - Kubernetes Secrets use API-server envelope encryption with a Zerops-generated 32-byte key.
+- Control-plane CA/private keys, service-account signing keys, static manifests, and the encryption configuration are backed up only inside an age/X25519-encrypted recovery object. The private age identity is a GitHub secret with a separate offline copy; neither it nor decrypted material enters artifacts or Git.
 - Audit policy records mutations and metadata access; Fluent Bit redacts credentials, cookies, e-mail addresses, usernames, and IP addresses before forwarding.
 - The `workloads` namespace enforces the Restricted Pod Security Standard. System namespaces explicitly opt into the minimum required privileged policy for CNI, mesh CNI, storage, node metrics, and log collection.
 - Istio ambient enforces strict mTLS for meshed workloads.

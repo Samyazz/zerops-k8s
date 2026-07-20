@@ -10,11 +10,16 @@ require curl
 require jq
 require kubectl
 require python3
+require age
+require tar
 
 if [[ -z "${K8S_IMAGE_STORAGE_ENDPOINT:-}" ]]; then
   load_zerops_env
 fi
-require_env K8S_IMAGE_STORAGE_ENDPOINT K8S_IMAGE_STORAGE_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+require_env K8S_IMAGE_STORAGE_ENDPOINT K8S_IMAGE_STORAGE_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY \
+  K8S_RECOVERY_AGE_RECIPIENT
+[[ "$K8S_RECOVERY_AGE_RECIPIENT" =~ ^age1[0-9a-z]+$ ]] \
+  || die 'K8S_RECOVERY_AGE_RECIPIENT is not a native age recipient'
 assert_repository_cluster
 
 backup_region=${K8S_BACKUP_REGION:-us-west-1}
@@ -24,6 +29,10 @@ work_dir=$(mktemp -d)
 snapshot=$work_dir/etcd.db
 downloaded=$work_dir/etcd-remote.db
 metadata=$work_dir/metadata.json
+recovery_manifest=$work_dir/recovery-manifest.json
+recovery_bundle=$work_dir/control-plane.tar.age
+recovery_downloaded=$work_dir/control-plane-remote.tar.age
+recovery_metadata=$work_dir/control-plane.json
 list_xml=$work_dir/list.xml
 system_backup="zerops-$(date -u +%Y%m%d%H%M%S)-${GITHUB_RUN_ID:-local}"
 system_backup=${system_backup:0:63}
@@ -38,6 +47,8 @@ cleanup() {
   rm -rf "$work_dir"
 }
 trap cleanup EXIT INT TERM
+
+"$ROOT_DIR/scripts/backup-retention.sh" pre-backup
 
 log 'ensuring the nested workers expose the Longhorn iSCSI frontend prerequisite'
 kubectl apply -f "$ROOT_DIR/kubernetes/longhorn-node-prerequisites.yaml" >/dev/null
@@ -76,6 +87,9 @@ kubectl apply -f "$ROOT_DIR/kubernetes/longhorn-backups.yaml" >/dev/null
 kubectl -n zerops-backup-validation wait pvc/longhorn-backup-proof \
   --for=jsonpath='{.status.phase}'=Bound --timeout=10m
 kubectl -n zerops-backup-validation rollout status deployment/longhorn-backup-proof --timeout=10m
+proof_sha=$(kubectl -n zerops-backup-validation exec deployment/longhorn-backup-proof \
+  -- sha256sum /data/proof.txt | awk '{print $1}')
+[[ "$proof_sha" =~ ^[0-9a-f]{64}$ ]] || die 'could not checksum the Longhorn proof payload'
 
 deadline=$((SECONDS + 600))
 until [[ $(kubectl -n longhorn-system get backuptargets.longhorn.io default -o jsonpath='{.status.available}') == true ]]; do
@@ -122,6 +136,25 @@ while (( SECONDS < deadline )); do
 done
 (( ${completed:-0} > 0 )) || die 'Longhorn did not produce a completed backup for the proof volume'
 
+longhorn_retain=${K8S_LONGHORN_SYSTEM_BACKUP_RETAIN:-8}
+[[ "$longhorn_retain" =~ ^[0-9]+$ && "$longhorn_retain" -ge 2 ]] \
+  || die 'K8S_LONGHORN_SYSTEM_BACKUP_RETAIN must be an integer of at least 2'
+mapfile -t expired_system_backups < <(
+  kubectl -n longhorn-system get systembackups.longhorn.io -o json | jq -r \
+    --argjson retain "$longhorn_retain" '
+      [.items[] | select(.metadata.name | startswith("zerops-")) | select(.status.state == "Ready")]
+      | sort_by(.metadata.creationTimestamp) | reverse | .[$retain:][]?.metadata.name
+    '
+)
+if (( ${#expired_system_backups[@]} > 0 )); then
+  kubectl -n longhorn-system delete systembackups.longhorn.io \
+    "${expired_system_backups[@]}" --wait=true --timeout=10m >/dev/null
+fi
+jq -n --argjson retained "$longhorn_retain" \
+  --argjson pruned "${#expired_system_backups[@]}" \
+  '{retainedLimit:$retained,prunedReadySystemBackups:$pruned}' \
+  >"$evidence_dir/longhorn-retention.json"
+
 kubectl -n longhorn-system get backuptargets.longhorn.io default -o json \
   | jq '{metadata:{name:.metadata.name},spec:{pollInterval:.spec.pollInterval},status:{available:.status.available,lastSyncedAt:.status.lastSyncedAt}}' \
   >"$evidence_dir/longhorn-target.json"
@@ -165,11 +198,18 @@ spec:
       volumeMounts:
         - name: backup
           mountPath: /backup
+        - name: control-plane
+          mountPath: /control-plane
+          readOnly: true
   volumes:
     - name: backup
       hostPath:
         path: /var/lib/etcd/zerops-backups
         type: DirectoryOrCreate
+    - name: control-plane
+      hostPath:
+        path: /etc/kubernetes
+        type: Directory
 EOF
 kubectl -n kube-system wait pod/"$reader_pod" --for=condition=Ready --timeout=5m
 etcd_pod=$(kubectl -n kube-system get pods -l component=etcd \
@@ -191,21 +231,68 @@ local_sha=$(sha256sum "$snapshot" | awk '{print $1}')
 
 timestamp=$(date -u +%Y/%m/%d/%Y%m%dT%H%M%SZ)
 object="etcd/${timestamp}-${GITHUB_RUN_ID:-local}.db"
+recovery_object="control-plane/${timestamp}-${GITHUB_RUN_ID:-local}.tar.age"
 s3_base="${K8S_IMAGE_STORAGE_ENDPOINT%/}/${K8S_IMAGE_STORAGE_BUCKET}"
 s3_args=(--fail --silent --show-error --retry 3 --aws-sigv4 "aws:amz:${backup_region}:s3" \
   --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY")
 curl "${s3_args[@]}" -T "$snapshot" "$s3_base/$object"
 
+jq -n \
+  --arg createdAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg repository "${GITHUB_REPOSITORY:-Samyazz/zerops-k8s}" \
+  --arg runId "${GITHUB_RUN_ID:-local}" \
+  --arg kubernetesVersion "$(kubectl version -o json | jq -r '.serverVersion.gitVersion')" \
+  --arg etcdImage "$(kubectl -n kube-system get pod "$etcd_pod" -o jsonpath='{.spec.containers[0].image}')" \
+  --arg etcdObject "$object" \
+  --argjson nodes "$(kubectl get nodes -o json | jq '[.items[] | {name:.metadata.name,kubeletVersion:.status.nodeInfo.kubeletVersion,containerRuntimeVersion:.status.nodeInfo.containerRuntimeVersion}] | sort_by(.name)')" \
+  '{createdAt:$createdAt,repository:$repository,runId:$runId,
+    kubernetesVersion:$kubernetesVersion,etcdImage:$etcdImage,etcdObject:$etcdObject,nodes:$nodes}' \
+  >"$recovery_manifest"
+kubectl -n kube-system exec -i "$reader_pod" -- sh -c \
+  'umask 077; cat > /tmp/recovery-manifest.json' <"$recovery_manifest"
+
+log 'encrypting the Kubernetes PKI, signing keys, manifests, and encryption configuration'
+# shellcheck disable=SC2016 # The single-quoted program intentionally expands inside the reader Pod.
+kubectl -n kube-system exec "$reader_pod" -- sh -ec '
+  staging=/tmp/control-plane-recovery
+  rm -rf "$staging"
+  mkdir -p "$staging"
+  for path in pki manifests admin.conf controller-manager.conf scheduler.conf kubelet.conf encryption-config.yaml audit-policy.yaml; do
+    test -e "/control-plane/$path"
+    cp -a "/control-plane/$path" "$staging/"
+  done
+  if test -f /control-plane/zerops-init.yaml; then cp -a /control-plane/zerops-init.yaml "$staging/"; fi
+  cp /tmp/recovery-manifest.json "$staging/"
+  tar -C "$staging" -czf - .
+' | age -r "$K8S_RECOVERY_AGE_RECIPIENT" -o "$recovery_bundle"
+[[ -s "$recovery_bundle" ]] || die 'encrypted control-plane recovery bundle is empty'
+recovery_sha=$(sha256sum "$recovery_bundle" | awk '{print $1}')
+curl "${s3_args[@]}" -T "$recovery_bundle" "$s3_base/$recovery_object"
+
 jq -cn --arg object "$object" --arg sha256 "$local_sha" \
   --arg createdAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson bytes "$(stat -c %s "$snapshot")" \
-  '{object:$object,sha256:$sha256,bytes:$bytes,createdAt:$createdAt,verified:true}' >"$metadata"
-curl "${s3_args[@]}" -H 'Content-Type: application/json' -T "$metadata" "$s3_base/$object.json"
+  --arg recoveryBundleObject "$recovery_object" \
+  '{object:$object,sha256:$sha256,bytes:$bytes,createdAt:$createdAt,
+    recoveryBundleObject:$recoveryBundleObject,verified:true}' >"$metadata"
+jq -cn --arg object "$recovery_object" --arg sha256 "$recovery_sha" \
+  --arg createdAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg etcdObject "$object" --argjson bytes "$(stat -c %s "$recovery_bundle")" \
+  '{object:$object,sha256:$sha256,bytes:$bytes,createdAt:$createdAt,
+    etcdObject:$etcdObject,encryption:"age-x25519",verified:true}' >"$recovery_metadata"
 
-log 'downloading the new etcd object and comparing it byte-for-byte'
+log 'downloading the new etcd and encrypted recovery objects and comparing them byte-for-byte'
 curl "${s3_args[@]}" -o "$downloaded" "$s3_base/$object"
 remote_sha=$(sha256sum "$downloaded" | awk '{print $1}')
 [[ "$remote_sha" == "$local_sha" ]] || die 'downloaded etcd backup checksum did not match'
+curl "${s3_args[@]}" -o "$recovery_downloaded" "$s3_base/$recovery_object"
+remote_recovery_sha=$(sha256sum "$recovery_downloaded" | awk '{print $1}')
+[[ "$remote_recovery_sha" == "$recovery_sha" ]] \
+  || die 'downloaded control-plane recovery bundle checksum did not match'
+curl "${s3_args[@]}" -H 'Content-Type: application/json' -T "$metadata" "$s3_base/$object.json"
+curl "${s3_args[@]}" -H 'Content-Type: application/json' \
+  -T "$recovery_metadata" "$s3_base/$recovery_object.json"
 install -m 0600 "$metadata" "$evidence_dir/etcd-backup.json"
+install -m 0600 "$recovery_metadata" "$evidence_dir/control-plane-recovery.json"
 
 curl "${s3_args[@]}" -o "$list_xml" "$s3_base?list-type=2&prefix=${backup_prefix}%2F"
 longhorn_objects=$(python3 - "$list_xml" <<'PY'
@@ -217,7 +304,10 @@ PY
 )
 (( longhorn_objects > 0 )) || die 'Longhorn reported completion but its S3 prefix is empty'
 jq -cn --argjson longhornObjects "$longhorn_objects" --arg proofVolume "$proof_volume" \
-  '{longhornObjects:$longhornObjects,proofVolume:$proofVolume,verified:true}' \
+  --arg proofSha256 "$proof_sha" \
+  '{longhornObjects:$longhornObjects,proofVolume:$proofVolume,
+    proofSha256:$proofSha256,verified:true}' \
   >"$evidence_dir/s3-longhorn-proof.json"
 
-log "verified etcd and Longhorn backups in Zerops object storage"
+"$ROOT_DIR/scripts/backup-retention.sh" post-backup
+log "verified bounded etcd, encrypted control-plane, and Longhorn backups in Zerops object storage"

@@ -204,6 +204,8 @@ assert_repository_cluster() {
   expected_repository=${GITHUB_REPOSITORY:-Samyazz/zerops-k8s}
   [[ "$state" != cleanup-failed ]] \
     || die 'the Zerops-side lock is cleanup-failed; run the explicit destroy workflow before continuing'
+  [[ "$state" != upgrade-failed || "${ALLOW_UPGRADE_RECOVERY:-false}" == true ]] \
+    || die 'the Zerops-side lock is upgrade-failed; resume the controlled upgrade workflow before other cluster changes'
   [[ -n "$state" && "$state" != destroyed ]] \
     || die 'no live repository-managed cluster is available for this operation'
   [[ -z "$repository" || "$repository" == unknown || "${repository,,}" == "${expected_repository,,}" ]] \
@@ -359,6 +361,18 @@ store_project_secret() {
   [[ "$value" != *$'\n'* ]] || die "secret $key contains a newline and cannot be stored"
   payload=$(jq -cn --arg key "$key" --arg content "$value" \
     '{key:$key, content:$content, sensitive:true}')
+  response=$(mktemp)
+  api_request_file POST "/project/${ZEROPS_PROJECT_ID}/env" "$payload" "$response"
+  process_id=$(jq -er '.id' "$response")
+  wait_public_process "$process_id"
+}
+
+store_project_variable() {
+  local key=$1 value=$2 response payload process_id
+  [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "invalid Zerops project variable key: $key"
+  [[ "$value" != *$'\n'* ]] || die "project variable $key contains a newline and cannot be stored"
+  payload=$(jq -cn --arg key "$key" --arg content "$value" \
+    '{key:$key, content:$content, sensitive:false}')
   response=$(mktemp)
   api_request_file POST "/project/${ZEROPS_PROJECT_ID}/env" "$payload" "$response"
   process_id=$(jq -er '.id' "$response")

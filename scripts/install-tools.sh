@@ -23,6 +23,14 @@ fi
 
 tmp=$(mktemp -d)
 
+age_archive="age-v${AGE_VERSION}-linux-amd64.tar.gz"
+curl -fsSLo "$tmp/$age_archive" \
+  "https://github.com/FiloSottile/age/releases/download/v${AGE_VERSION}/$age_archive"
+printf '%s  %s\n' 'bdc69c09cbdd6cf8b1f333d372a1f58247b3a33146406333e30c0f26e8f51377' \
+  "$tmp/$age_archive" | sha256sum -c -
+tar -xzf "$tmp/$age_archive" -C "$tmp"
+sudo install -m 0755 "$tmp/age/age" "$tmp/age/age-keygen" /usr/local/bin/
+
 if ! command -v jq >/dev/null 2>&1; then
   curl -fsSLo "$tmp/jq" "https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}/jq-linux-amd64"
   curl -fsSLo "$tmp/jq.sha256" "https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}/sha256sum.txt"

@@ -30,10 +30,12 @@ type agent struct {
 }
 
 type response struct {
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
-	CAHash string `json:"caHash,omitempty"`
-	Digest string `json:"digest,omitempty"`
+	Status         string `json:"status"`
+	Detail         string `json:"detail,omitempty"`
+	CAHash         string `json:"caHash,omitempty"`
+	Digest         string `json:"digest,omitempty"`
+	CurrentVersion string `json:"currentVersion,omitempty"`
+	TargetVersion  string `json:"targetVersion,omitempty"`
 }
 
 func Run() error {
@@ -55,13 +57,14 @@ func Run() error {
 	mux.Handle("POST /v1/cluster/init", a.auth(http.HandlerFunc(a.initCluster)))
 	mux.Handle("POST /v1/cluster/join", a.auth(http.HandlerFunc(a.joinCluster)))
 	mux.Handle("POST /v1/cluster/reset", a.auth(http.HandlerFunc(a.resetCluster)))
+	mux.Handle("POST /v1/cluster/upgrade", a.auth(http.HandlerFunc(a.upgradeCluster)))
 	mux.Handle("GET /v1/cluster/kubeconfig", a.auth(http.HandlerFunc(a.kubeconfig)))
 
 	server := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           requestLog(mux),
 		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      15 * time.Minute,
+		WriteTimeout:      35 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

@@ -56,6 +56,7 @@ jobs:
       ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_CLIENT_ID: ${{ vars.ZEROPS_CLIENT_ID }}
+      K8S_RECOVERY_AGE_RECIPIENT: ${{ vars.K8S_RECOVERY_AGE_RECIPIENT }}
       DESIRED_WORKERS: ${{ inputs.desired_workers }}
       CONTROL_PLANE_CPU: ${{ inputs.control_plane_cpu }}
       CONTROL_PLANE_RAM_GB: ${{ inputs.control_plane_ram_gb }}

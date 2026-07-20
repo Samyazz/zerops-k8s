@@ -1,9 +1,22 @@
-name: Back up Zerops Kubernetes
+name: Upgrade Zerops Kubernetes version
 
 on:
-  schedule:
-    - cron: '23 */6 * * *'
   workflow_dispatch:
+    inputs:
+      confirm_target:
+        description: Exact reviewed target from versions.env, including v (for example v1.36.2)
+        required: true
+        type: string
+      plan_only:
+        description: Validate compatibility, backup/restore, image, and kubeadm plan without changing the control plane
+        required: true
+        default: true
+        type: boolean
+      run_full_conformance:
+        description: Run full CNCF conformance after an applied upgrade
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -13,35 +26,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  backup:
-    if: github.actor == github.repository_owner || github.event_name == 'schedule'
+  controlled-upgrade:
+    if: github.actor == github.repository_owner
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 480
     env:
       ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_CLIENT_ID: ${{ vars.ZEROPS_CLIENT_ID }}
       K8S_RECOVERY_AGE_RECIPIENT: ${{ vars.K8S_RECOVERY_AGE_RECIPIENT }}
+      K8S_RECOVERY_AGE_IDENTITY: ${{ secrets.K8S_RECOVERY_AGE_IDENTITY }}
+      UPGRADE_CONFIRM_TARGET: ${{ inputs.confirm_target }}
+      UPGRADE_PLAN_ONLY: ${{ inputs.plan_only }}
+      RUN_FULL_CONFORMANCE: ${{ inputs.run_full_conformance }}
     steps:
       - name: Check out the exact requested revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
 
-      - name: Enforce repository-owner trigger
-        if: github.event_name == 'workflow_dispatch'
-        shell: bash
-        run: |
-          [[ "$GITHUB_ACTOR" == "$GITHUB_REPOSITORY_OWNER" ]] || {
-            echo 'Only the repository owner may run backups.' >&2
-            exit 1
-          }
-
       - name: Install pinned tools
         shell: bash
         run: ./scripts/install-tools.sh
 
-      - name: Create and verify etcd and Longhorn backups
+      - name: Validate, plan, and optionally apply the reviewed upgrade
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -62,13 +70,13 @@ jobs:
           sed -i 's#^[[:space:]]*server:.*#    server: https://k8sedge.zerops:6443#' "$KUBECONFIG"
           chmod 0600 "$KUBECONFIG"
           kubectl get --raw=/readyz >/dev/null
-          ./scripts/backup-cluster.sh
+          ./scripts/upgrade-cluster.sh
 
-      - name: Upload sanitized backup evidence
+      - name: Upload sanitized upgrade evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: zerops-k8s-backup-evidence-${{ github.run_id }}
-          path: ${{ runner.temp }}/evidence/backups
+          name: zerops-k8s-upgrade-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/evidence
           if-no-files-found: warn
           retention-days: 1

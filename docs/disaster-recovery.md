@@ -10,9 +10,9 @@ The edge proxy removes failed TCP backends naturally. Two etcd members retain qu
 
 ## Two control planes lost
 
-Do not reset the surviving member. Recover at least one failed member if possible. If quorum cannot be recovered, use the most recent verified object beneath `etcd/YYYY/MM/DD/` and its adjacent `.json` metadata. Confirm the downloaded SHA-256 before touching the surviving data directory.
+Do not reset the surviving member. Recover at least one failed member if possible. If quorum cannot be recovered, use the most recent verified object beneath `etcd/YYYY/MM/DD/`, its adjacent `.json` metadata, and the linked encrypted object beneath `control-plane/YYYY/MM/DD/`. Confirm both downloaded SHA-256 values before touching the surviving data directory.
 
-Restore into clean control-plane state using the same Kubernetes/etcd version and the retained PKI/encryption material. Use `etcdutl snapshot restore` to a new data directory with the intended member name, peer URL, and initial cluster membership; point the static etcd Pod at the restored directory only after the restore completes. Start one member, verify etcd and API health, then join/recreate the other control planes serially. An etcd restore is a destructive quorum-recovery operation: preserve the current data directories and follow the target Kubernetes release's kubeadm/etcd recovery procedure rather than restoring over a running member.
+Decrypt the control-plane bundle with the offline copy of `K8S_RECOVERY_AGE_IDENTITY`; do not print or upload the plaintext. Restore into clean control-plane state using the Kubernetes and etcd images recorded in `recovery-manifest.json`, the retained PKI/signing keys, and the retained API encryption configuration. Use `etcdutl snapshot restore` to a new data directory with the intended member name, peer URL, and initial cluster membership; point the static etcd Pod at the restored directory only after the restore completes. Start one member, verify etcd and API health, then join/recreate the other control planes serially. An etcd restore is a destructive quorum-recovery operation: preserve the current data directories and follow the target Kubernetes release's kubeadm/etcd recovery procedure rather than restoring over a running member.
 
 ## Longhorn restore
 
@@ -28,11 +28,11 @@ Do not commit the generated S3 Secret or copy its values into an Action artifact
 
 ## Whole nested cluster lost
 
-1. Preserve the verified etcd object/metadata pair, required Longhorn system and volume backups, application-aware backups, and the current Zerops secret variables.
+1. Preserve the verified etcd object/metadata pair, linked encrypted control-plane bundle/metadata pair, offline age identity, required Longhorn system and volume backups, application-aware backups, and the current Zerops secret variables.
 2. Run the destroy workflow until the Zerops-side state is `destroyed`.
 3. Run the deploy workflow to recreate the cluster.
 4. Restore Longhorn metadata/volumes from the Zerops S3 target, then restore application-consistent data where required.
 5. Restore etcd only when recovery of the old Kubernetes object/control-plane state is required; otherwise let Git and the deployment workflow recreate that state.
 6. Rotate Headlamp tokens and review audit logs.
 
-The repository and Zerops secrets are the configuration source of truth. The backup workflow validates snapshot structure and an S3 upload/download checksum round trip, but a scheduled isolated restore drill is still required to prove the complete application recovery-time objective. Prometheus data is demonstrational and only retained for four hours; it should not be treated as recovery-critical.
+The repository and Zerops secrets are the configuration source of truth. The monthly recovery workflow proves decryption, required control-plane identity files, an isolated etcd boot/query, and a content-identical Longhorn volume restore. It intentionally does not overwrite the running cluster. A whole-cluster recovery-time rehearsal requires a temporary recovery project and explicit exemption from the one-cluster rule. Prometheus data is demonstrational and only retained for four hours; it should not be treated as recovery-critical.

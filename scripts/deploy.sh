@@ -58,7 +58,7 @@ set_cluster_state deploying "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
 cluster_touched=true
 "$ROOT_DIR/scripts/provision-observability.sh"
 if [[ "$RECONCILE_EXISTING" == true ]]; then
-  "$ROOT_DIR/scripts/redeploy-node-agents.sh"
+  PUSH_AGENT_CODE=true "$ROOT_DIR/scripts/redeploy-node-agents.sh"
 fi
 "$ROOT_DIR/scripts/reconcile-node-resources.sh"
 "$ROOT_DIR/scripts/build-and-deploy.sh"

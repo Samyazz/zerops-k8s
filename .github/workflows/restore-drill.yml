@@ -1,8 +1,8 @@
-name: Back up Zerops Kubernetes
+name: Drill Zerops Kubernetes recovery
 
 on:
   schedule:
-    - cron: '23 */6 * * *'
+    - cron: '13 4 1 * *'
   workflow_dispatch:
 
 permissions:
@@ -13,15 +13,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  backup:
+  restore-drill:
     if: github.actor == github.repository_owner || github.event_name == 'schedule'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 150
     env:
       ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_CLIENT_ID: ${{ vars.ZEROPS_CLIENT_ID }}
       K8S_RECOVERY_AGE_RECIPIENT: ${{ vars.K8S_RECOVERY_AGE_RECIPIENT }}
+      K8S_RECOVERY_AGE_IDENTITY: ${{ secrets.K8S_RECOVERY_AGE_IDENTITY }}
     steps:
       - name: Check out the exact requested revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -33,7 +34,7 @@ jobs:
         shell: bash
         run: |
           [[ "$GITHUB_ACTOR" == "$GITHUB_REPOSITORY_OWNER" ]] || {
-            echo 'Only the repository owner may run backups.' >&2
+            echo 'Only the repository owner may run recovery drills.' >&2
             exit 1
           }
 
@@ -41,7 +42,7 @@ jobs:
         shell: bash
         run: ./scripts/install-tools.sh
 
-      - name: Create and verify etcd and Longhorn backups
+      - name: Create a fresh recovery point and restore it in isolation
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -63,12 +64,13 @@ jobs:
           chmod 0600 "$KUBECONFIG"
           kubectl get --raw=/readyz >/dev/null
           ./scripts/backup-cluster.sh
+          ./scripts/restore-drill.sh
 
-      - name: Upload sanitized backup evidence
+      - name: Upload sanitized restore evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: zerops-k8s-backup-evidence-${{ github.run_id }}
-          path: ${{ runner.temp }}/evidence/backups
+          name: zerops-k8s-restore-drill-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/evidence
           if-no-files-found: warn
           retention-days: 1

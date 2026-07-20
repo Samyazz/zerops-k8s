@@ -16,6 +16,38 @@ require_env K8S_AGENT_TOKEN
 
 current_service=
 current_drained=false
+push_agent_code=${PUSH_AGENT_CODE:-false}
+[[ "$push_agent_code" == true || "$push_agent_code" == false ]] \
+  || die 'PUSH_AGENT_CODE must be true or false'
+version_name="github-${GITHUB_RUN_ID:-local}-${GITHUB_SHA:-working}-node-agent"
+
+deploy_agent() {
+  local service=$1 setup attempt result source_args=(--workspace-state all)
+  case "$service" in
+    k8scp1) setup=controlplane1 ;;
+    k8scp2) setup=controlplane2 ;;
+    k8scp3) setup=controlplane3 ;;
+    k8sworker1) setup=worker1 ;;
+    k8sworker2) setup=worker2 ;;
+    k8sworker3) setup=worker3 ;;
+    k8sworker4) setup=worker4 ;;
+    *) die "no node-agent setup is mapped for $service" ;;
+  esac
+  if [[ ! -d "$ROOT_DIR/.git" ]]; then source_args=(--no-git); fi
+  for attempt in 1 2 3; do
+    set +e
+    timeout "${ZEROPS_DEPLOY_TIMEOUT:-35m}" zcli push "$service" -P "$ZEROPS_PROJECT_ID" \
+      --setup "$setup" --version-name "$version_name" --working-dir "$ROOT_DIR" \
+      "${source_args[@]}"
+    result=$?
+    set -e
+    (( result == 0 )) && return 0
+    (( result != 124 )) || die "Zerops node-agent deployment timed out for $service"
+    log "node-agent deployment failed on attempt $attempt; retrying $service"
+    sleep 5
+  done
+  die "node-agent deployment failed after three attempts: $service"
+}
 restore_cordon() {
   if [[ "$current_drained" == true && -n "$current_service" && -s "${KUBECONFIG:-}" ]]; then
     kubectl uncordon "$current_service" >/dev/null 2>&1 || true
@@ -89,6 +121,10 @@ for service in "${order[@]}"; do
   if [[ "$stale_node" == true ]]; then
     log "removing the stale non-Ready node object before recovering $service"
     kubectl delete "node/$service" --ignore-not-found >/dev/null
+  fi
+  if [[ "$push_agent_code" == true ]]; then
+    log "deploying the reviewed node-agent revision while $service is drained"
+    deploy_agent "$service"
   fi
   wait_for_agent "$service"
   agent_request "$service" POST /v1/node/start >/dev/null

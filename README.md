@@ -24,7 +24,7 @@ The repository owner runs **Deploy Zerops Kubernetes** from GitHub's Actions pag
 5. Deploys the node agents and redundant edge proxies through zCLI.
 6. Initializes or updates the single repository-managed cluster.
 7. Reconciles networking, mesh, storage, dashboard, identity, and telemetry resources.
-8. Creates and verifies etcd and Longhorn backups in Zerops S3-compatible object storage.
+8. Creates bounded etcd and Longhorn backups plus an age-encrypted control-plane identity bundle in Zerops S3-compatible object storage.
 9. Tests the live Zerops resource contract, control-plane failover, actual worker loss and rescheduling, cross-node networking, DNS, ingestion, Kubescape, and optional full CNCF conformance.
 10. Stores the admin kubeconfig and four Headlamp role tokens as sensitive Zerops project variables.
 11. Leaves a passing cluster running. A failed first deployment resets partial nested infrastructure; a failed reconciliation preserves the existing cluster for diagnosis.
@@ -34,6 +34,8 @@ Required repository configuration:
 - Secret `ZEROPS_TOKEN`: a Zerops access token able to manage the target project.
 - Variable `ZEROPS_PROJECT_ID`: the existing project ID.
 - Variable `ZEROPS_CLIENT_ID`: the owning Zerops client/team ID.
+- Variable `K8S_RECOVERY_AGE_RECIPIENT`: the public X25519 recipient produced by `age-keygen`.
+- Secret `K8S_RECOVERY_AGE_IDENTITY`: the corresponding private age identity, required only by recovery drills and restores. Keep an offline copy outside Zerops and GitHub.
 
 The workflow uses no third-party Actions. GitHub-owned Actions are pinned to full commit SHAs; every other operation is shell plus the Zerops API/zCLI.
 
@@ -41,8 +43,10 @@ The workflow uses no third-party Actions. GitHub-owned Actions are pinned to ful
 
 All cluster-changing workflows share one GitHub concurrency group and verify the Zerops-side repository lock, so a backup, deployment, resize, maintenance roll, or destroy cannot race another operation.
 
-- **Back up Zerops Kubernetes** runs every six hours or on demand. It creates a consistent etcd snapshot and Longhorn system/volume backups in `k8sbackups`, then downloads and checksum-verifies the new etcd object and proves the Longhorn S3 prefix is populated.
+- **Back up Zerops Kubernetes** runs every six hours or on demand. It creates a consistent etcd snapshot, an age-encrypted PKI/signing/encryption bundle, and Longhorn system/volume backups in `k8sbackups`; verifies S3 round trips; prunes only recognised verified recovery sets according to tiered retention; and fails before exhaustion at the configured quota threshold.
+- **Drill Zerops Kubernetes recovery** runs monthly or on demand. It decrypts the newest identity bundle, restores and boots the etcd snapshot in an isolated runner container, queries Kubernetes registry keys, restores the newest Longhorn proof backup as a distinct volume, and requires its content checksum to match.
 - **Roll Zerops Kubernetes nodes and add-ons** runs weekly or on demand. It requires a successful pre-update backup, drains and rolls workers before control planes one at a time, waits for Longhorn health between disruptions, reconciles pinned add-ons, and runs acceptance checks. It does not silently change the pinned Kubernetes version.
+- **Upgrade Zerops Kubernetes version** is owner-triggered and requires the exact reviewed `versions.env` target. It gates the add-on compatibility tuple, proves a fresh recovery point, uploads the replacement image, runs `kubeadm upgrade plan`, and—when plan-only is disabled—upgrades control planes then workers serially before acceptance/conformance.
 - **Resize Zerops Kubernetes** runs on demand. It safely changes the fixed dedicated CPU/RAM/disk contract one node at a time and scales between three and four workers. Disk can grow but cannot shrink; scale-in drains workloads and evicts Longhorn replicas before deleting worker four.
 - **Destroy Zerops Kubernetes** is the explicit teardown and cleanup-recovery path.
 

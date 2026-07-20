@@ -55,9 +55,12 @@ Scaling to four creates `k8sworker4`, deploys the agent, joins and labels the no
 
 - Prometheus snapshots run hourly and keep four object-storage copies.
 - **Back up Zerops Kubernetes** runs at minute 23 every six hours and can also be started manually by the repository owner.
-- Each run creates a consistent stacked-etcd snapshot on `k8scp1`, checks it with `etcdutl`, uploads it beneath `etcd/YYYY/MM/DD/`, uploads checksum metadata beside it, downloads it again, and requires a byte-for-byte SHA-256 match.
+- Each run creates a consistent stacked-etcd snapshot on `k8scp1`, checks it with `etcdutl`, uploads it beneath `etcd/YYYY/MM/DD/`, downloads it again, and only then uploads its verified-success metadata.
+- The matching `control-plane/YYYY/MM/DD/` object is an age/X25519-encrypted archive containing Kubernetes PKI, service-account signing keys, static manifests, kubeconfigs, the API encryption configuration, and an exact node/etcd version manifest. The Action round-trip verifies the encrypted object without exposing its plaintext or private identity.
 - The same run configures Longhorn's target beneath `longhorn/`, creates a `SystemBackup` with `volumeBackupPolicy: always`, and requires both `Ready` system-backup state and a completed backup of a real proof PVC. S3 credentials are created at runtime from Zerops object-storage variables and are never stored in Git.
-- Longhorn recurring volume backups run at minute 17 every six hours and recurring system backups at minute 47. Each job retains its latest eight Longhorn backup records. Etcd objects are deliberately immutable and are not pruned by repository automation; configure a Zerops bucket lifecycle or review them manually according to the required recovery window.
+- Longhorn recurring volume backups run at minute 17 every six hours and recurring system backups at minute 47. Each recurring job and the Action-created `zerops-*` SystemBackups retain eight records.
+- Etcd and encrypted identity objects use fail-closed tiered retention: the newest 28 verified sets, the newest set from seven UTC days, four ISO weeks, and three calendar months are retained as a union. A snapshot without its adjacent verified metadata is never deleted automatically. Settings are project variables and can be tightened or extended for a published import.
+- The recipe provisions a private 25 GB `k8sbackups` bucket. At backup start, an older smaller bucket is increased in place to `K8S_BACKUP_QUOTA_GB` through the Zerops API without replacement or data loss. Every backup then sums the entire bucket inventory after pruning, emits a GitHub warning at 70%, and fails closed at 95%. Raise the configured quota or adjust retention before retrying; the workflow never deletes node images, Longhorn-native objects, incomplete snapshots, or unrecognised keys.
 - The four-hour setting applies only to demonstration metrics and logs, not to cluster backups.
 
 Longhorn's three replicas provide node-failure availability, while the S3 target provides the separate off-node backup copy. Databases and other stateful applications may still need application-consistent logical backups in addition to crash-consistent volume backups.
@@ -70,7 +73,19 @@ kubectl -n longhorn-system get recurringjobs
 kubectl -n zerops-backup-validation get pvc,pod
 ```
 
-Each Action retains a sanitized one-day artifact with the etcd object key, byte count, SHA-256, snapshot revision/key count, Longhorn target status, system-backup status, completed volume-backup status, and S3 object-count proof. It contains no object-store credential.
+Each Action retains a sanitized one-day artifact with the etcd and encrypted-bundle object keys, byte counts and SHA-256 values, snapshot revision/key count, retention/capacity decisions, Longhorn target status, system-backup status, completed volume-backup status, and S3 object-count proof. It contains no object-store credential, age identity, Kubernetes private key, or decrypted bundle.
+
+## Recovery drills
+
+**Drill Zerops Kubernetes recovery** runs on the first day of each month at 04:13 UTC and can be dispatched by the repository owner. It first creates a fresh recovery point, then:
+
+1. Downloads and checksum-verifies the etcd snapshot and encrypted control-plane bundle.
+2. Decrypts the bundle with the GitHub recovery identity and requires the CA, etcd CA, service-account signing key, static etcd manifest, encryption configuration, and version manifest.
+3. Uses the recorded official etcd image to restore into a disposable local data directory, starts an isolated member, requires endpoint health, and verifies Kubernetes registry/default-namespace keys.
+4. Restores the newest completed backup of the real Longhorn proof PVC into a distinct Longhorn volume/PV/PVC, mounts it read-only, and compares its payload SHA-256 to the live source.
+5. Removes all disposable etcd and Longhorn drill resources. Only sanitized evidence is uploaded.
+
+This proves backup readability and data restoration without stopping or overwriting the live API server. A destructive whole-cluster rehearsal still requires an explicitly approved temporary recovery project because the repository's one-cluster invariant forbids a second live cluster by default.
 
 ## Break-glass access
 
