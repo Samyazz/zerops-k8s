@@ -3,11 +3,15 @@ set -Eeuo pipefail
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/lib.sh"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/versions.env"
 
 require_env ZEROPS_TOKEN ZEROPS_PROJECT_ID
 require zcli
 require curl
 require jq
+require sha256sum
+require tar
 
 if [[ -z "${K8S_AGENT_TOKEN:-}" ]]; then
   load_zerops_env
@@ -20,11 +24,56 @@ current_stopped=false
 push_agent_code=${PUSH_AGENT_CODE:-false}
 [[ "$push_agent_code" == true || "$push_agent_code" == false ]] \
   || die 'PUSH_AGENT_CODE must be true or false'
-source_revision=${GITHUB_SHA:-working}
+if [[ -d "$ROOT_DIR/.git" ]]; then
+  source_revision=${GITHUB_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD)}
+else
+  source_revision=working
+fi
 version_name="github-${GITHUB_RUN_ID:-local}-${source_revision:0:12}-node-agent"
+agent_artifact_dir=
+
+prepare_agent_artifact() {
+  local tool_root archive tmp go_bin current_version artifact_parent
+  tool_root="${RUNNER_TEMP:-/tmp}/zerops-k8s-go-${GO_VERSION}"
+  go_bin="$tool_root/bin/go"
+  if [[ ! -x "$go_bin" ]]; then
+    require_env GO_LINUX_AMD64_SHA256
+    tmp=$(mktemp -d)
+    archive="$tmp/go${GO_VERSION}.linux-amd64.tar.gz"
+    log "installing the pinned Go ${GO_VERSION} toolchain for the reviewed node-agent artifact"
+    curl -fsSLo "$archive" "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
+    printf '%s  %s\n' "$GO_LINUX_AMD64_SHA256" "$archive" | sha256sum -c -
+    mkdir -p "$tool_root"
+    tar -xzf "$archive" -C "$tool_root" --strip-components=1
+  fi
+  current_version=$($go_bin version | awk '{print $3}')
+  [[ "$current_version" == "go${GO_VERSION}" ]] \
+    || die "pinned Go toolchain mismatch: expected go${GO_VERSION}, got $current_version"
+
+  artifact_parent="${RUNNER_TEMP:-/tmp}/zerops-k8s-agent-${source_revision:0:12}"
+  agent_artifact_dir="$artifact_parent/runtime"
+  if [[ ! -x "$agent_artifact_dir/dist/zerops-k8s" || ! -x "$agent_artifact_dir/s3-fetch" ]]; then
+    [[ -d "$ROOT_DIR/.git" ]] \
+      || die 'a committed Git checkout is required to assemble the reviewed node-agent artifact'
+    mkdir -p "$agent_artifact_dir"
+    git -C "$ROOT_DIR" archive --format=tar "$source_revision" | tar -xf - -C "$agent_artifact_dir"
+    mkdir -p "$agent_artifact_dir/dist"
+    (
+      cd "$agent_artifact_dir"
+      CGO_ENABLED=0 "$go_bin" test ./...
+      CGO_ENABLED=0 "$go_bin" build -trimpath -ldflags='-s -w' -o dist/zerops-k8s ./cmd/zerops-k8s
+      CGO_ENABLED=0 "$go_bin" build -trimpath -ldflags='-s -w' -o s3-fetch ./cmd/s3-fetch
+    )
+    mkdir -p "${RUNNER_TEMP:-/tmp}/evidence"
+    (
+      cd "$agent_artifact_dir"
+      sha256sum dist/zerops-k8s s3-fetch
+    ) >"${RUNNER_TEMP:-/tmp}/evidence/node-agent-artifact.sha256"
+  fi
+}
 
 deploy_agent() {
-  local service=$1 setup attempt result source_args=(--workspace-state all)
+  local service=$1 setup attempt result
   case "$service" in
     k8scp1) setup=controlplane1 ;;
     k8scp2) setup=controlplane2 ;;
@@ -35,12 +84,11 @@ deploy_agent() {
     k8sworker4) setup=worker4 ;;
     *) die "no node-agent setup is mapped for $service" ;;
   esac
-  if [[ ! -d "$ROOT_DIR/.git" ]]; then source_args=(--no-git); fi
   for attempt in 1 2 3; do
     set +e
-    timeout "${ZEROPS_DEPLOY_TIMEOUT:-35m}" zcli push "$service" -P "$ZEROPS_PROJECT_ID" \
-      --setup "$setup" --version-name "$version_name" --working-dir "$ROOT_DIR" \
-      "${source_args[@]}"
+    timeout "${ZEROPS_DEPLOY_TIMEOUT:-35m}" zcli service deploy "$service" -P "$ZEROPS_PROJECT_ID" \
+      --setup "$setup" --version-name "${version_name}-${attempt}" \
+      --working-dir "$agent_artifact_dir" --path-to-file-or-dir .
     result=$?
     set -e
     (( result == 0 )) && return 0
@@ -76,6 +124,13 @@ restore_cordon() {
   set -e
 }
 trap restore_cordon EXIT INT TERM
+
+# Build and test the exact committed agent before any Kubernetes node is
+# cordoned. zcli `service deploy` uploads this runtime artifact directly and
+# therefore does not depend on Zerops' temporary build-container capacity.
+if [[ "$push_agent_code" == true ]]; then
+  prepare_agent_artifact
+fi
 
 order=(k8sworker1 k8sworker2 k8sworker3)
 if service_exists k8sworker4; then order+=(k8sworker4); fi

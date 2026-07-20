@@ -71,6 +71,8 @@ kubectl get pv | grep restore-drill
 
 The project lock becomes `upgrade-failed`, blocking deploy, resize, maintenance, and backup changes while leaving explicit teardown available. Re-run **Upgrade Zerops Kubernetes version** from the same reviewed commit and target; already-upgraded nodes are skipped. Do not attempt a package or Kubernetes downgrade. If kubeadm cannot resume, preserve the failed nodes and use the fresh restore-drill evidence plus the disaster-recovery runbook to rebuild compatible control planes.
 
+The node-agent rollout compiles and tests its committed runtime artifact before the first drain, then uploads it through Zerops' direct app-version deployment endpoint. A temporary Zerops builder provisioning failure therefore does not take a node down. If runtime deployment itself fails, the exit trap restarts/rejoins the old nested node and restores its prior schedulability before the workflow exits.
+
 ## Metrics, logs, or traces are missing
 
 - Metrics: inspect Alloy and query `http://prometheus.zerops:9090/-/ready` over the VPN.
