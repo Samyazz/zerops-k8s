@@ -16,10 +16,12 @@ require_env K8S_AGENT_TOKEN
 
 current_service=
 current_drained=false
+current_stopped=false
 push_agent_code=${PUSH_AGENT_CODE:-false}
 [[ "$push_agent_code" == true || "$push_agent_code" == false ]] \
   || die 'PUSH_AGENT_CODE must be true or false'
-version_name="github-${GITHUB_RUN_ID:-local}-${GITHUB_SHA:-working}-node-agent"
+source_revision=${GITHUB_SHA:-working}
+version_name="github-${GITHUB_RUN_ID:-local}-${source_revision:0:12}-node-agent"
 
 deploy_agent() {
   local service=$1 setup attempt result source_args=(--workspace-state all)
@@ -43,15 +45,35 @@ deploy_agent() {
     set -e
     (( result == 0 )) && return 0
     (( result != 124 )) || die "Zerops node-agent deployment timed out for $service"
-    log "node-agent deployment failed on attempt $attempt; retrying $service"
-    sleep 5
+    if (( attempt < 3 )); then
+      log "node-agent deployment failed on attempt $attempt; retrying $service"
+      sleep 5
+    fi
   done
   die "node-agent deployment failed after three attempts: $service"
 }
 restore_cordon() {
+  local response
+  set +e
+  if [[ "$current_stopped" == true && -n "$current_service" && -s "${KUBECONFIG:-}" ]]; then
+    log "recovering stopped node after an interrupted or failed node-agent delivery: $current_service"
+    wait_for_agent "$current_service"
+    agent_request "$current_service" POST /v1/node/start >/dev/null
+    if [[ "$current_service" == k8scp1 ]]; then
+      agent_request "$current_service" POST /v1/cluster/init >/dev/null
+    else
+      response=${join_payload:-}
+      [[ -n "$response" ]] && agent_request "$current_service" POST /v1/cluster/join "$response" >/dev/null
+    fi
+    kubectl wait "node/$current_service" --for=condition=Ready --timeout=15m >/dev/null
+    recover_terminating_node_pods "$current_service" 60
+    current_stopped=false
+  fi
   if [[ "$current_drained" == true && -n "$current_service" && -s "${KUBECONFIG:-}" ]]; then
     kubectl uncordon "$current_service" >/dev/null 2>&1 || true
+    current_drained=false
   fi
+  set -e
 }
 trap restore_cordon EXIT INT TERM
 
@@ -115,6 +137,7 @@ for service in "${order[@]}"; do
   if [[ "$node_state" == running ]]; then
     agent_request "$service" POST /v1/node/stop >/dev/null
   fi
+  current_stopped=true
   if [[ "$disk_replacement" == true ]]; then
     repair_replaced_longhorn_disk "$service"
   fi
@@ -133,6 +156,7 @@ for service in "${order[@]}"; do
   else
     agent_request "$service" POST /v1/cluster/join "$join_payload" >/dev/null
   fi
+  current_stopped=false
   deadline=$((SECONDS + 300))
   until kubectl get "node/$service" >/dev/null 2>&1; do
     (( SECONDS < deadline )) || die "node did not register after restart: $service"
