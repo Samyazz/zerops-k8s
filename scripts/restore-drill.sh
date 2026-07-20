@@ -54,7 +54,9 @@ cleanup() {
   kubectl delete pv "$restore_pv" --ignore-not-found --wait=true --timeout=5m >/dev/null 2>&1 || true
   kubectl -n longhorn-system delete volumes.longhorn.io "$restore_volume" \
     --ignore-not-found --wait=true --timeout=5m >/dev/null 2>&1 || true
-  rm -rf "$work_dir"
+  # etcdutl runs as root in the pinned etcd image, so its disposable data
+  # directory is root-owned on the runner bind mount.
+  sudo rm -rf -- "$work_dir"
 }
 trap cleanup EXIT INT TERM
 
