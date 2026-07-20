@@ -58,11 +58,14 @@ jobs:
           vpn_connected=true
           source ./scripts/lib.sh
           load_zerops_env
+          log 'loaded Zerops project environment; requesting the admin kubeconfig'
           export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
           agent_request k8scp1 GET /v1/cluster/kubeconfig >"$KUBECONFIG"
+          log 'received the admin kubeconfig; validating API readiness'
           sed -i 's#^[[:space:]]*server:.*#    server: https://k8sedge.zerops:6443#' "$KUBECONFIG"
           chmod 0600 "$KUBECONFIG"
           kubectl get --raw=/readyz >/dev/null
+          log 'Kubernetes API is ready; starting the fresh backup and restore drill'
           ./scripts/backup-cluster.sh
           ./scripts/restore-drill.sh
 

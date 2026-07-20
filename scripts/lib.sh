@@ -29,7 +29,11 @@ load_zerops_env() {
     if timeout 60 zcli project env -P "$ZEROPS_PROJECT_ID" --service k8scp1 >"$env_file"; then
       set -a
       # shellcheck disable=SC1090
-      source "$env_file"
+      if ! source "$env_file"; then
+        set +a
+        rm -f "$env_file"
+        die 'Zerops returned an environment file that could not be loaded safely'
+      fi
       set +a
       rm -f "$env_file"
       return 0
