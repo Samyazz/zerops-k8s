@@ -73,6 +73,8 @@ The project lock becomes `upgrade-failed`, blocking deploy, resize, maintenance,
 
 The node-agent rollout compiles and tests its committed runtime artifact before the first drain, then uploads it through Zerops' direct app-version deployment endpoint. A temporary Zerops builder provisioning failure therefore does not take a node down. If runtime deployment itself fails, the exit trap restarts/rejoins the old nested node and restores its prior schedulability before the workflow exits.
 
+To test only the disposable Docker delivery canary from an authenticated maintenance shell, run `PUSH_AGENT_CODE=true NODE_AGENT_CANARY_ONLY=true ./scripts/redeploy-node-agents.sh`. It builds the committed artifact, creates and validates the worker-sized canary, removes it, and exits without cordoning or restarting any Kubernetes node.
+
 ## Metrics, logs, or traces are missing
 
 - Metrics: inspect Alloy and query `http://prometheus.zerops:9090/-/ready` over the VPN.

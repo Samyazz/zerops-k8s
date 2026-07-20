@@ -3,6 +3,8 @@ set -Eeuo pipefail
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/lib.sh"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/node-agent-artifact.sh"
 
 require_env ZEROPS_TOKEN ZEROPS_PROJECT_ID KUBECONFIG
 require curl
@@ -34,9 +36,14 @@ validate_integer WORKER_DISK_GB "$worker_disk" 50 1000
 
 current_node=
 current_cordoned=false
+partial_worker4=false
 restore_cordon() {
   if [[ "$current_cordoned" == true && -n "$current_node" ]]; then
     kubectl uncordon "$current_node" >/dev/null 2>&1 || true
+  fi
+  if [[ "$partial_worker4" == true ]]; then
+    log 'removing a partially provisioned fourth worker after resize failure or cancellation'
+    zcli service delete k8sworker4 -P "$ZEROPS_PROJECT_ID" --confirm >/dev/null 2>&1 || true
   fi
 }
 trap restore_cordon EXIT INT TERM
@@ -111,15 +118,15 @@ scale_node() {
 }
 
 add_fourth_worker() {
-  local import_file version_name init_response ca_hash deadline
+  local import_file init_response ca_hash deadline
   log 'horizontally scaling from three workers to four'
+  prepare_node_agent_artifact
   import_file=$(mktemp)
   sed -n '1,1p' "$ROOT_DIR/import.yaml" >"$import_file"
   {
     printf 'services:\n'
     printf '  - hostname: k8sworker4\n'
     printf '    type: docker@26.1.5\n'
-    printf '    startWithoutCode: true\n'
     printf '    minContainers: 1\n'
     printf '    maxContainers: 1\n'
     printf '    verticalAutoscaling:\n'
@@ -133,12 +140,13 @@ add_fourth_worker() {
     printf '      maxDisk: %s\n' "$worker_disk"
     printf '      swapEnabled: false\n'
   } >>"$import_file"
+  partial_worker4=true
   zcli project service-import "$import_file" -P "$ZEROPS_PROJECT_ID"
   rm -f "$import_file"
 
-  version_name="github-${GITHUB_RUN_ID:-local}-${GITHUB_SHA:-working}-worker4"
-  zcli push k8sworker4 -P "$ZEROPS_PROJECT_ID" --setup worker4 \
-    --version-name "$version_name" --working-dir "$ROOT_DIR" --workspace-state all
+  zcli service deploy k8sworker4 -P "$ZEROPS_PROJECT_ID" --setup worker4 \
+    --version-name "${NODE_AGENT_VERSION_NAME}-worker4" \
+    --working-dir "$NODE_AGENT_ARTIFACT_DIR" --path-to-file-or-dir .
   wait_for_agent k8sworker4
   agent_request k8sworker4 POST /v1/node/start >/dev/null
   init_response=$(agent_request k8scp1 POST /v1/cluster/init)
@@ -161,6 +169,7 @@ add_fourth_worker() {
     --field-selector spec.nodeName=k8sworker4 --for=condition=Ready --timeout=10m
   wait_longhorn_disk_ready k8sworker4
   wait_longhorn_healthy
+  partial_worker4=false
   refresh_inventory
 }
 

@@ -49,7 +49,7 @@ Run **Resize Zerops Kubernetes** and provide the desired fixed resources. Contro
 
 The workflow takes verified backups first, then cordons, drains, resizes, restarts, verifies, and uncordons one node at a time. CPU and RAM can move up or down. Zerops Docker VM disks can only grow, so any disk value below the current allocation is rejected before that node is changed.
 
-Scaling to four creates `k8sworker4`, deploys the agent, joins and labels the node, and waits for Calico, Istio, Longhorn, and the required host modules. Scaling to three disables Longhorn scheduling on worker four, waits for all replicas to evacuate, drains and resets it, and only then removes its Kubernetes and Zerops records. Three workers remain the HA and Longhorn-replica floor.
+Scaling to four builds and tests the exact committed node-agent artifact before changing infrastructure, creates `k8sworker4` without a placeholder deployment, activates the verified artifact through the direct app-version API, joins and labels the node, and waits for Calico, Istio, Longhorn, and the required host modules. A failed or canceled partial scale-up deletes the unfinished Zerops service. Scaling to three disables Longhorn scheduling on worker four, waits for all replicas to evacuate, drains and resets it, and only then removes its Kubernetes and Zerops records. Three workers remain the HA and Longhorn-replica floor.
 
 ## Backups
 

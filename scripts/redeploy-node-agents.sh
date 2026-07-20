@@ -4,14 +4,12 @@ ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/lib.sh"
 # shellcheck disable=SC1091
-source "$ROOT_DIR/versions.env"
+source "$ROOT_DIR/scripts/node-agent-artifact.sh"
 
 require_env ZEROPS_TOKEN ZEROPS_PROJECT_ID
 require zcli
 require curl
 require jq
-require sha256sum
-require tar
 
 if [[ -z "${K8S_AGENT_TOKEN:-}" ]]; then
   load_zerops_env
@@ -24,53 +22,15 @@ current_stopped=false
 push_agent_code=${PUSH_AGENT_CODE:-false}
 [[ "$push_agent_code" == true || "$push_agent_code" == false ]] \
   || die 'PUSH_AGENT_CODE must be true or false'
-if [[ -d "$ROOT_DIR/.git" ]]; then
-  source_revision=${GITHUB_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD)}
-else
-  source_revision=working
-fi
-version_name="github-${GITHUB_RUN_ID:-local}-${source_revision:0:12}-node-agent"
+canary_only=${NODE_AGENT_CANARY_ONLY:-false}
+[[ "$canary_only" == true || "$canary_only" == false ]] \
+  || die 'NODE_AGENT_CANARY_ONLY must be true or false'
+[[ "$canary_only" != true || "$push_agent_code" == true ]] \
+  || die 'NODE_AGENT_CANARY_ONLY requires PUSH_AGENT_CODE=true'
 agent_artifact_dir=
-
-prepare_agent_artifact() {
-  local tool_root archive tmp go_bin current_version artifact_parent
-  tool_root="${RUNNER_TEMP:-/tmp}/zerops-k8s-go-${GO_VERSION}"
-  go_bin="$tool_root/bin/go"
-  if [[ ! -x "$go_bin" ]]; then
-    require_env GO_LINUX_AMD64_SHA256
-    tmp=$(mktemp -d)
-    archive="$tmp/go${GO_VERSION}.linux-amd64.tar.gz"
-    log "installing the pinned Go ${GO_VERSION} toolchain for the reviewed node-agent artifact"
-    curl -fsSLo "$archive" "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
-    printf '%s  %s\n' "$GO_LINUX_AMD64_SHA256" "$archive" | sha256sum -c -
-    mkdir -p "$tool_root"
-    tar -xzf "$archive" -C "$tool_root" --strip-components=1
-  fi
-  current_version=$($go_bin version | awk '{print $3}')
-  [[ "$current_version" == "go${GO_VERSION}" ]] \
-    || die "pinned Go toolchain mismatch: expected go${GO_VERSION}, got $current_version"
-
-  artifact_parent="${RUNNER_TEMP:-/tmp}/zerops-k8s-agent-${source_revision:0:12}"
-  agent_artifact_dir="$artifact_parent/runtime"
-  if [[ ! -x "$agent_artifact_dir/dist/zerops-k8s" || ! -x "$agent_artifact_dir/s3-fetch" ]]; then
-    [[ -d "$ROOT_DIR/.git" ]] \
-      || die 'a committed Git checkout is required to assemble the reviewed node-agent artifact'
-    mkdir -p "$agent_artifact_dir"
-    git -C "$ROOT_DIR" archive --format=tar "$source_revision" | tar -xf - -C "$agent_artifact_dir"
-    mkdir -p "$agent_artifact_dir/dist"
-    (
-      cd "$agent_artifact_dir"
-      CGO_ENABLED=0 "$go_bin" test ./...
-      CGO_ENABLED=0 "$go_bin" build -trimpath -ldflags='-s -w' -o dist/zerops-k8s ./cmd/zerops-k8s
-      CGO_ENABLED=0 "$go_bin" build -trimpath -ldflags='-s -w' -o s3-fetch ./cmd/s3-fetch
-    )
-    mkdir -p "${RUNNER_TEMP:-/tmp}/evidence"
-    (
-      cd "$agent_artifact_dir"
-      sha256sum dist/zerops-k8s s3-fetch
-    ) >"${RUNNER_TEMP:-/tmp}/evidence/node-agent-artifact.sha256"
-  fi
-}
+version_name=
+canary_service=k8sagentcanary
+canary_created=false
 
 deploy_agent() {
   local service=$1 setup attempt result
@@ -82,6 +42,7 @@ deploy_agent() {
     k8sworker2) setup=worker2 ;;
     k8sworker3) setup=worker3 ;;
     k8sworker4) setup=worker4 ;;
+    k8sagentcanary) setup=worker4 ;;
     *) die "no node-agent setup is mapped for $service" ;;
   esac
   for attempt in 1 2 3; do
@@ -121,15 +82,76 @@ restore_cordon() {
     kubectl uncordon "$current_service" >/dev/null 2>&1 || true
     current_drained=false
   fi
+  if [[ "$canary_created" == true ]]; then
+    log 'removing the disposable node-agent delivery canary'
+    zcli service delete "$canary_service" -P "$ZEROPS_PROJECT_ID" --confirm >/dev/null 2>&1 || true
+    canary_created=false
+  fi
   set -e
 }
 trap restore_cordon EXIT INT TERM
+
+preflight_agent_delivery() {
+  local import_file worker_cpu worker_ram worker_disk
+
+  if service_exists "$canary_service"; then
+    log 'removing a stale node-agent delivery canary from an interrupted run'
+    zcli service delete "$canary_service" -P "$ZEROPS_PROJECT_ID" --confirm >/dev/null
+  fi
+  worker_cpu=$(cluster_tag_value worker-cpu)
+  worker_ram=$(cluster_tag_value worker-ram)
+  worker_disk=$(cluster_tag_value worker-disk)
+  worker_cpu=${worker_cpu:-4}
+  worker_ram=${worker_ram:-12}
+  worker_disk=${worker_disk:-50}
+  [[ "$worker_cpu" =~ ^[0-9]+$ && "$worker_ram" =~ ^[0-9]+$ && "$worker_disk" =~ ^[0-9]+$ ]] \
+    || die 'worker resource tags must be whole numbers before the rollout canary is created'
+
+  import_file=$(mktemp)
+  printf '%s\n' \
+    'services:' \
+    "  - hostname: $canary_service" \
+    '    type: docker@26.1.5' \
+    '    minContainers: 1' \
+    '    maxContainers: 1' \
+    '    verticalAutoscaling:' \
+    '      cpuMode: DEDICATED' \
+    "      minCpu: $worker_cpu" \
+    "      maxCpu: $worker_cpu" \
+    "      startCpuCoreCount: $worker_cpu" \
+    "      minRam: $worker_ram" \
+    "      maxRam: $worker_ram" \
+    "      minDisk: $worker_disk" \
+    "      maxDisk: $worker_disk" \
+    '      swapEnabled: false' >"$import_file"
+
+  log "proving Zerops can allocate a ${worker_cpu}-CPU/${worker_ram}GB Docker rollout canary before any node is drained"
+  canary_created=true
+  if ! zcli project service-import "$import_file" -P "$ZEROPS_PROJECT_ID" >/dev/null; then
+    rm -f "$import_file"
+    die 'Zerops could not allocate the rollout canary; no Kubernetes node was changed'
+  fi
+  rm -f "$import_file"
+  deploy_agent "$canary_service"
+  wait_for_agent "$canary_service"
+  agent_request "$canary_service" GET /v1/state | jq -e '.status == "missing"' >/dev/null
+  zcli service delete "$canary_service" -P "$ZEROPS_PROJECT_ID" --confirm >/dev/null
+  canary_created=false
+  log 'node-agent delivery canary passed and was removed'
+}
 
 # Build and test the exact committed agent before any Kubernetes node is
 # cordoned. zcli `service deploy` uploads this runtime artifact directly and
 # therefore does not depend on Zerops' temporary build-container capacity.
 if [[ "$push_agent_code" == true ]]; then
-  prepare_agent_artifact
+  prepare_node_agent_artifact
+  agent_artifact_dir=$NODE_AGENT_ARTIFACT_DIR
+  version_name=$NODE_AGENT_VERSION_NAME
+  preflight_agent_delivery
+  if [[ "$canary_only" == true ]]; then
+    log 'node-agent delivery canary-only check completed; no Kubernetes node was changed'
+    exit 0
+  fi
 fi
 
 order=(k8sworker1 k8sworker2 k8sworker3)
