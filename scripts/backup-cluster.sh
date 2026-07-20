@@ -60,6 +60,41 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+stream_pod_file() {
+  local namespace=$1 pod=$2 remote_path=$3 destination=$4
+  local block_size=1048576 chunk_blocks=8 remote_size total_blocks block blocks
+  local expected received attempt part="${destination}.part" copied=false
+  remote_size=$(kubectl -n "$namespace" exec "$pod" -- stat -c %s "$remote_path")
+  [[ "$remote_size" =~ ^[0-9]+$ && "$remote_size" -gt 0 ]] \
+    || die "could not determine the remote backup size: $remote_path"
+  total_blocks=$(((remote_size + block_size - 1) / block_size))
+  : >"$destination"
+  for ((block = 0; block < total_blocks; block += chunk_blocks)); do
+    blocks=$chunk_blocks
+    (( block + blocks <= total_blocks )) || blocks=$((total_blocks - block))
+    expected=$((remote_size - block * block_size))
+    (( expected <= blocks * block_size )) || expected=$((blocks * block_size))
+    copied=false
+    for attempt in 1 2 3 4 5; do
+      if kubectl -n "$namespace" exec "$pod" -- \
+        dd "if=$remote_path" "bs=$block_size" "skip=$block" "count=$blocks" 2>/dev/null >"$part"; then
+        received=$(stat -c %s "$part")
+        if (( received == expected )); then
+          cat "$part" >>"$destination"
+          copied=true
+          break
+        fi
+      fi
+      log "retrying interrupted etcd snapshot chunk $((block / chunk_blocks + 1)) (attempt $attempt)"
+      sleep "$attempt"
+    done
+    [[ "$copied" == true ]] || die "could not stream a verified etcd snapshot chunk from $pod"
+  done
+  rm -f "$part"
+  [[ $(stat -c %s "$destination") -eq "$remote_size" ]] \
+    || die 'the streamed etcd snapshot size did not match the immutable source'
+}
+
 log 'cluster lock and recovery encryption settings validated; enforcing backup capacity'
 "$ROOT_DIR/scripts/backup-retention.sh" pre-backup
 
@@ -240,7 +275,7 @@ kubectl -n kube-system exec "$etcd_pod" -- etcdutl snapshot status \
   --write-out=json "$etcd_snapshot_path" \
   | jq '{hash,revision,totalKey,totalSize}' >"$evidence_dir/etcd-snapshot-status.json"
 reader_sha=$(kubectl -n kube-system exec "$reader_pod" -- sha256sum "/backup/$etcd_snapshot_name" | awk '{print $1}')
-kubectl -n kube-system exec "$reader_pod" -- cat "/backup/$etcd_snapshot_name" >"$snapshot"
+stream_pod_file kube-system "$reader_pod" "/backup/$etcd_snapshot_name" "$snapshot"
 [[ -s "$snapshot" ]] || die 'the etcd snapshot reader returned an empty file'
 local_sha=$(sha256sum "$snapshot" | awk '{print $1}')
 [[ "$local_sha" == "$reader_sha" ]] || die 'etcd snapshot checksum changed while streaming from k8scp1'
