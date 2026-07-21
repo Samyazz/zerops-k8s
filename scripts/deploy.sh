@@ -28,6 +28,8 @@ shellcheck "$ROOT_DIR"/scripts/*.sh
 project_state=$(cluster_tag_value state)
 project_repository=$(cluster_tag_value repository)
 project_profile=$(cluster_tag_value profile)
+project_operation=$(cluster_tag_value operation)
+project_owner_run=$(cluster_tag_value run)
 if [[ -z "$project_profile" && -n "$project_state" && "$project_state" != destroyed ]]; then
   project_profile=full
 fi
@@ -44,6 +46,16 @@ fi
 
 zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
 vpn_connected=true
+
+if [[ "$project_state" == deploying && "$project_owner_run" != "$GITHUB_RUN_ID" \
+      && ( "$project_operation" == create || "$project_operation" == switch ) ]]; then
+  log "removing recipe-owned services abandoned by clean deployment run $project_owner_run before retry"
+  "$ROOT_DIR/scripts/reconcile-profile-services.sh" purge
+  set_cluster_state destroyed "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+  project_state=destroyed
+  project_profile=
+fi
+
 set_cluster_tag attempt "$GITHUB_RUN_ID"
 
 set_profile_resource_tags() {

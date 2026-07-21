@@ -137,9 +137,20 @@ class WorkflowProfileContractTests(unittest.TestCase):
         )
         self.assertIn('"$ROOT_DIR/scripts/reconcile-profile-services.sh" purge', cleanup)
         self.assertIn('"$attempt" == "$GITHUB_RUN_ID"', cleanup)
+        self.assertIn('"$state" == destroyed || "$state" == deploying', cleanup)
         self.assertIn('set_cluster_state cleanup-failed', cleanup)
+        self.assertIn('set_cluster_state destroyed', cleanup)
         self.assertIn('mode" == purge', reconcile)
         self.assertIn('partial recipe-owned services remain after cleanup', reconcile)
+
+    def test_next_deploy_purges_an_abandoned_clean_creation_before_retry(self):
+        deploy = (ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
+        stale = deploy.index('"$project_state" == deploying')
+        purge = deploy.index('"$ROOT_DIR/scripts/reconcile-profile-services.sh" purge')
+        attempt = deploy.index('set_cluster_tag attempt "$GITHUB_RUN_ID"')
+        self.assertLess(stale, purge)
+        self.assertLess(purge, attempt)
+        self.assertIn('"$project_owner_run" != "$GITHUB_RUN_ID"', deploy)
 
     def test_actions_deploys_the_exact_clean_revision(self):
         deploy = (ROOT / "scripts" / "build-and-deploy.sh").read_text(encoding="utf-8")
