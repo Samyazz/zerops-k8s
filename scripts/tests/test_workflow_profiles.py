@@ -204,6 +204,8 @@ class WorkflowProfileContractTests(unittest.TestCase):
         self.assertIn("collect_platform_log_evidence", acceptance)
         self.assertIn("collect_platform_stats_evidence", acceptance)
         self.assertIn("/stats-history/group-by-search", acceptance)
+        self.assertIn('limit:20,timeZone:"UTC"', acceptance)
+        self.assertNotIn('limit:1000,from:$from,till:$till', acceptance)
         self.assertIn("zerops-runtime-statistics.json", acceptance)
         self.assertIn("zerops-backup-storage.json", acceptance)
 

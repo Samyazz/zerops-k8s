@@ -123,7 +123,7 @@ collect_platform_log_evidence() {
 }
 
 collect_platform_stats_evidence() {
-  local inventory expected_ids response payload from till deadline actual_count=0 expected_count
+  local inventory expected_ids response payload deadline actual_count=0 expected_count
   local backup_id backup_status backup_usage backup_quota
   require_env ZEROPS_CLIENT_ID
   inventory=$(mktemp)
@@ -138,15 +138,13 @@ collect_platform_stats_evidence() {
 
   deadline=$((SECONDS + 300))
   while (( SECONDS < deadline )); do
-    from=$(date -u -d '20 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-    till=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     payload=$(jq -cn --arg client "$ZEROPS_CLIENT_ID" --arg project "$ZEROPS_PROJECT_ID" \
-      --arg from "$from" --arg till "$till" '{
+      '{
         search:[
           {name:"clientId",operator:"eq",value:$client},
           {name:"projectId",operator:"eq",value:$project}
         ],
-        limit:1000,from:$from,till:$till,timeZone:"UTC",
+        limit:20,timeZone:"UTC",
         groupBy:"serviceStackId",timeGroupBy:"1m"
       }')
     if api_request_file POST /stats-history/group-by-search "$payload" "$response"; then
