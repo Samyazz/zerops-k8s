@@ -47,6 +47,10 @@ deploy_one() {
   local source_args=(--workspace-state all)
   if [[ ! -d "$ROOT_DIR/.git" ]]; then
     source_args=(--no-git)
+  elif [[ "${GITHUB_ACTIONS:-false}" == true ]]; then
+    # Acceptance deploys must upload exactly the checked-out revision. Using
+    # the clean Git archive also avoids packaging runner-only workspace state.
+    source_args=(--workspace-state clean)
   fi
   log "deploying $service with setup $setup"
   for attempt in 1 2 3; do

@@ -141,6 +141,11 @@ class WorkflowProfileContractTests(unittest.TestCase):
         self.assertIn('mode" == purge', reconcile)
         self.assertIn('partial recipe-owned services remain after cleanup', reconcile)
 
+    def test_actions_deploys_the_exact_clean_revision(self):
+        deploy = (ROOT / "scripts" / "build-and-deploy.sh").read_text(encoding="utf-8")
+        self.assertIn('"${GITHUB_ACTIONS:-false}" == true', deploy)
+        self.assertIn('source_args=(--workspace-state clean)', deploy)
+
     def test_manual_jobs_are_owner_only_and_no_push_trigger_exists(self):
         for name in PROFILE_WORKFLOWS:
             data = workflow(name)
