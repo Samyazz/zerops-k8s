@@ -124,12 +124,7 @@ endpoint_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
   --data "$(payload preflight)" http://k8scp1:18080/v1/cluster/upgrade || true)
 backup_taken=false
 if [[ "$endpoint_status" == 404 ]]; then
-  log 'deploying the reviewed fixed-operation upgrade endpoint to every node agent'
-  if profile_capability backup; then
-    "$ROOT_DIR/scripts/backup-cluster.sh"
-    backup_taken=true
-  fi
-  PUSH_AGENT_CODE=true "$ROOT_DIR/scripts/redeploy-node-agents.sh"
+  die 'the installed node agent predates the state-preserving upgrade endpoint; perform a reviewed clean profile replacement rather than redeploying a stateful outer runtime'
 elif [[ "$endpoint_status" != 200 ]]; then
   die "k8scp1 upgrade preflight endpoint returned HTTP $endpoint_status"
 fi

@@ -220,6 +220,18 @@ class WorkflowProfileContractTests(unittest.TestCase):
         fresh = deploy.index('"$ROOT_DIR/scripts/build-and-deploy.sh"', preserve)
         self.assertLess(preserve, fresh)
 
+    def test_resize_preserves_permanent_cluster_and_node_identities(self):
+        resize = (ROOT / "scripts" / "resize-cluster.sh").read_text(encoding="utf-8")
+        self.assertIn("identity_before=", resize)
+        self.assertIn("identity_after=", resize)
+        self.assertIn("permanent node identities", resize)
+        self.assertIn("evidence/resize/identity.json", resize)
+
+    def test_upgrade_never_redeploys_stateful_outer_node_runtimes(self):
+        upgrade = (ROOT / "scripts" / "upgrade-cluster.sh").read_text(encoding="utf-8")
+        self.assertNotIn('PUSH_AGENT_CODE=true "$ROOT_DIR/scripts/redeploy-node-agents.sh"', upgrade)
+        self.assertIn("installed node agent predates the state-preserving upgrade endpoint", upgrade)
+
     def test_compact_profiles_collect_platform_logs_and_resource_statistics(self):
         acceptance = (ROOT / "scripts" / "acceptance-profile.sh").read_text(encoding="utf-8")
         self.assertIn("collect_platform_log_evidence", acceptance)

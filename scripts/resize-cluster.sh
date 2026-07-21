@@ -48,6 +48,21 @@ if (( desired_workers != baseline_workers )); then
     || die "horizontal resize is not supported by Kubernetes profile '$K8S_PROFILE'"
 fi
 
+# Zerops CPU/RAM changes restart the existing runtime and must retain its
+# filesystem. Record the repository profile's permanent Kubernetes identities
+# so a resize can never silently replace the cluster while still ending Ready.
+required_node_names=$(printf '%s\n' "${NODES[@]}" | jq -Rsc 'split("\n")[:-1]')
+identity_before=$(kubectl get namespace kube-system -o json | jq -c \
+  --argjson nodes "$(kubectl get nodes -o json)" \
+  --argjson required "$required_node_names" '
+    {clusterUid:.metadata.uid,
+     nodes:($nodes.items
+       | map(select(.metadata.name as $name | $required | index($name)))
+       | map({name:.metadata.name,uid:.metadata.uid})
+       | sort_by(.name))}')
+[[ $(jq '.nodes | length' <<<"$identity_before") -eq ${#NODES[@]} ]] \
+  || die 'one or more permanent profile nodes are absent before resize'
+
 current_node=
 current_cordoned=false
 partial_optional_worker=false
@@ -264,6 +279,21 @@ set_cluster_tag worker-disk "$worker_disk"
 kubectl wait --for=condition=Ready nodes --all --timeout=10m
 [[ $(kubectl get nodes -l node-role.kubernetes.io/control-plane -o name | wc -l) -eq ${#CONTROL_PLANES[@]} ]]
 [[ $(kubectl get nodes -l node-role.kubernetes.io/worker -o name | wc -l) -eq "$desired_workers" ]]
+identity_after=$(kubectl get namespace kube-system -o json | jq -c \
+  --argjson nodes "$(kubectl get nodes -o json)" \
+  --argjson required "$required_node_names" '
+    {clusterUid:.metadata.uid,
+     nodes:($nodes.items
+       | map(select(.metadata.name as $name | $required | index($name)))
+       | map({name:.metadata.name,uid:.metadata.uid})
+       | sort_by(.name))}')
+jq -en --argjson before "$identity_before" --argjson after "$identity_after" \
+  '$before == $after' >/dev/null \
+  || die 'resize changed the Kubernetes cluster or permanent node identities'
+mkdir -p "${RUNNER_TEMP:-$ROOT_DIR/artifacts}/evidence/resize"
+jq -n --argjson before "$identity_before" --argjson after "$identity_after" \
+  '{preserved:($before == $after),before:$before,after:$after}' \
+  >"${RUNNER_TEMP:-$ROOT_DIR/artifacts}/evidence/resize/identity.json"
 "$ROOT_DIR/scripts/verify-node-resources.sh" "${RUNNER_TEMP:-$ROOT_DIR/artifacts}/evidence/resize/resources.json"
 kubectl get nodes -o wide >"${RUNNER_TEMP:-$ROOT_DIR/artifacts}/evidence/resize/nodes.txt"
-log 'vertical and horizontal resize completed with all nodes Ready'
+log 'vertical and horizontal resize completed with all nodes Ready and permanent identities preserved'
