@@ -178,7 +178,21 @@ if (( ${#missing[@]} > 0 )); then
       grep -Fq "  - hostname: $name" "$filtered_import" \
         || die "could not render missing service from $import_file: $name"
     done
-    zcli project service-import "$filtered_import" -P "$ZEROPS_PROJECT_ID"
+    import_succeeded=false
+    for attempt in 1 2 3; do
+      if zcli project service-import "$filtered_import" -P "$ZEROPS_PROJECT_ID"; then
+        import_succeeded=true
+        break
+      fi
+      log "profile service import failed on attempt $attempt; removing any partial target services before retry"
+      refresh_inventory
+      for name in "${missing[@]}"; do
+        service_present "$name" && delete_service "$name"
+      done
+      (( attempt == 3 )) || sleep $((attempt * 5))
+    done
+    [[ "$import_succeeded" == true ]] \
+      || die "profile service import failed after clean retries: $K8S_PROFILE"
   fi
 fi
 
