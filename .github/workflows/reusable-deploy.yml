@@ -16,6 +16,8 @@ on:
     secrets:
       ZEROPS_TOKEN:
         required: true
+      K8S_RECOVERY_AGE_IDENTITY:
+        required: true
 
 permissions:
   contents: read
@@ -36,6 +38,7 @@ jobs:
       K8S_PROFILE: ${{ inputs.profile }}
       RUN_FULL_CONFORMANCE: ${{ inputs.run_full_conformance }}
       K8S_RECOVERY_AGE_RECIPIENT: ${{ vars.K8S_RECOVERY_AGE_RECIPIENT }}
+      K8S_RECOVERY_AGE_IDENTITY: ${{ secrets.K8S_RECOVERY_AGE_IDENTITY }}
     steps:
       - name: Check out the exact requested revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
