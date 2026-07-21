@@ -124,11 +124,12 @@ set_cluster_state deploying "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
 
 cluster_touched=true
 "$ROOT_DIR/scripts/provision-observability.sh"
-if [[ "$RECONCILE_EXISTING" == true ]]; then
-  PUSH_AGENT_CODE=true "$ROOT_DIR/scripts/redeploy-node-agents.sh"
-fi
 "$ROOT_DIR/scripts/reconcile-node-resources.sh"
-"$ROOT_DIR/scripts/build-and-deploy.sh"
+if [[ "$RECONCILE_EXISTING" == true ]]; then
+  log 'preserving existing outer node runtimes and their nested Kubernetes state during reconciliation'
+else
+  "$ROOT_DIR/scripts/build-and-deploy.sh"
+fi
 
 export KUBECONFIG="${RUNNER_TEMP:-$ROOT_DIR/artifacts}/kubeconfig"
 "$ROOT_DIR/scripts/cluster-bootstrap.sh"

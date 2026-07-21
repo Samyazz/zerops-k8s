@@ -207,6 +207,19 @@ class WorkflowProfileContractTests(unittest.TestCase):
         ready_wait = rollout.index('kubectl wait "node/$service" --for=condition=Ready', uncordon)
         self.assertLess(uncordon, ready_wait)
 
+    def test_maintenance_never_redeploys_stateful_outer_node_runtimes(self):
+        maintenance = (ROOT / "scripts" / "rolling-update.sh").read_text(encoding="utf-8")
+        deploy = (ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
+        self.assertIn('PUSH_AGENT_CODE=false "$ROOT_DIR/scripts/redeploy-node-agents.sh"', maintenance)
+        self.assertNotIn('PUSH_AGENT_CODE=true "$ROOT_DIR/scripts/redeploy-node-agents.sh"', maintenance)
+        self.assertIn("identity_before=", maintenance)
+        self.assertIn("identity_after=", maintenance)
+        self.assertIn("rolling maintenance changed the Kubernetes cluster or node identities", maintenance)
+        reconcile = deploy.index('if [[ "$RECONCILE_EXISTING" == true ]]')
+        preserve = deploy.index("preserving existing outer node runtimes", reconcile)
+        fresh = deploy.index('"$ROOT_DIR/scripts/build-and-deploy.sh"', preserve)
+        self.assertLess(preserve, fresh)
+
     def test_compact_profiles_collect_platform_logs_and_resource_statistics(self):
         acceptance = (ROOT / "scripts" / "acceptance-profile.sh").read_text(encoding="utf-8")
         self.assertIn("collect_platform_log_evidence", acceptance)
