@@ -12,7 +12,10 @@ failed=0
 pids=()
 # shellcheck disable=SC2153 # NODES is declared by scripts/lib.sh.
 nodes=("${NODES[@]}")
-if service_exists k8sworker4; then nodes+=(k8sworker4); fi
+mapfile -t optional_workers < <(profile_json '.topology.optionalWorkers[]?')
+for node in "${optional_workers[@]}"; do
+  if service_exists "$node"; then nodes+=("$node"); fi
+done
 for node in "${nodes[@]}"; do
   (
     wait_for_agent "$node"

@@ -1,72 +1,79 @@
 # Kubernetes on Zerops
 
-This repository is a publishable Zerops recipe and owner-triggered GitHub Actions automation for a full, highly available Kubernetes cluster inside one existing Zerops project. The default topology has six nodes; the resize workflow can add a fourth worker temporarily or permanently.
+This repository is a publishable Zerops recipe and owner-triggered GitHub Actions automation for running upstream Kubernetes inside one Zerops project. It offers three mutually exclusive profiles. `full` remains the backward-compatible default.
 
-The design intentionally treats Zerops as the infrastructure layer and Kubernetes as a nested control plane:
+| Profile | Zerops services | Kubernetes add-ons | Intended use |
+|---|---|---|---|
+| `full` | 3 control planes, 3 workers, redundant edge, backup storage, Grafana/Prometheus and ELK/APM services | Calico, Istio ambient, Gateway API, Longhorn, cert-manager, Headlamp, metrics and telemetry collectors | Proper production demonstration with HA control plane and the complete operational stack |
+| `production` | 1 control plane, 2 workers, redundant edge, backup storage | Calico, Traefik Gateway API, Longhorn and metrics-server | Compact production with redundant workers and Zerops platform observability only |
+| `staging` | 1 control plane and 1 worker | Calico, Traefik Gateway API and metrics-server | Minimal, disposable stage with no recipe-owned orbiting services |
 
-- Kubernetes `v1.36.2`: three stacked-etcd control planes and three workers.
-- Calico `v3.32.1` with VXLAN networking.
-- Istio `v1.30.3` in ambient mode, strict mTLS, and Gateway API ingress.
-- Longhorn `v1.12.0`, three storage replicas.
-- Headlamp `v0.43.0`, reachable only over the Zerops VPN.
-- Grafana Alloy for metrics and OTLP traces; a narrowly scoped Fluent Bit bridge for logs because Zerops' first-class logging backend is ELK rather than Loki.
-- Zerops' first-class Prometheus/Grafana and ELK/Kibana/APM recipes. No observability backend runs inside Kubernetes.
-- Pod Security Admission, secret encryption at rest, Kubernetes auditing, Kubescape reports, and full CNCF conformance.
+All profiles use the pinned Kubernetes and add-on versions in [`versions.env`](versions.env), encrypted Kubernetes Secrets, audit logging, Pod Security Admission, least-privilege RBAC, NetworkPolicy defaults, resource-bounded demonstration workloads, and Kubescape reporting.
+
+`production` is not control-plane HA. If its sole control plane is unavailable, the Kubernetes API and etcd are unavailable until that node recovers. Existing worker workloads can continue, but scheduling and reconciliation stop. Choose `full` when control-plane quorum and failover are requirements. `staging` is intentionally non-HA and has no off-node backup.
 
 ## Deployment
 
-The repository owner runs **Deploy Zerops Kubernetes** from GitHub's Actions page. It is deliberately `workflow_dispatch` only. The deployment workflow:
+Run **Deploy Zerops Kubernetes** from the repository's Actions page and select `profile`. The default is `full`, preserving existing callers. Deployment is manual and repository-owner-only. It uses the reusable workflow in [`.github/workflows/reusable-deploy.yml`](.github/workflows/reusable-deploy.yml), with no third-party Actions and GitHub-owned Actions pinned to full commit SHAs.
 
-1. Uses GitHub concurrency and a Zerops-side repository/run lock.
-2. Reconciles and verifies all six node services through the Zerops API: exactly one VM each, dedicated 4-vCPU mode, 8/12 GB RAM, and 20/50 GB disk with fixed minimum and maximum values.
-3. Reconciles Zerops' first-class observability recipes in the existing project.
-4. Builds the pinned Ubuntu node image and uploads the archive plus checksum to private Zerops object storage.
-5. Deploys the node agents and redundant edge proxies through zCLI.
-6. Initializes or updates the single repository-managed cluster.
-7. Reconciles networking, mesh, storage, dashboard, identity, and telemetry resources.
-8. Creates bounded etcd and Longhorn backups plus an age-encrypted control-plane identity bundle in Zerops S3-compatible object storage.
-9. Tests the live Zerops resource contract, control-plane failover, actual worker loss and rescheduling, cross-node networking, DNS, ingestion, Kubescape, and optional full CNCF conformance.
-10. Stores the admin kubeconfig and four Headlamp role tokens as sensitive Zerops project variables.
-11. Leaves a passing cluster running. A failed first deployment resets partial nested infrastructure; a failed reconciliation preserves the existing cluster for diagnosis.
+The workflow acquires the repository-wide GitHub concurrency lock and the Zerops repository/profile lock, validates the selected profile before any mutation, reconciles its exact service inventory, deploys the nested cluster, runs profile-appropriate acceptance tests, and retains sanitized evidence for one day. A same-profile run reconciles in place. A profile change is a deliberate clean replacement; it never attempts to shrink a three-member etcd cluster into one member in place.
 
 Required repository configuration:
 
 - Secret `ZEROPS_TOKEN`: a Zerops access token able to manage the target project.
 - Variable `ZEROPS_PROJECT_ID`: the existing project ID.
 - Variable `ZEROPS_CLIENT_ID`: the owning Zerops client/team ID.
-- Variable `K8S_RECOVERY_AGE_RECIPIENT`: the public X25519 recipient produced by `age-keygen`.
-- Secret `K8S_RECOVERY_AGE_IDENTITY`: the corresponding private age identity, required only by recovery drills and restores. Keep an offline copy outside Zerops and GitHub.
+- Variable `K8S_PROFILE`: the profile used by scheduled backup and maintenance jobs; it defaults to `full` when absent. Keep it equal to the live profile.
+- Variable `K8S_RECOVERY_AGE_RECIPIENT`: the public X25519 recipient produced by `age-keygen`; required by `full` and `production` backup paths.
+- Secret `K8S_RECOVERY_AGE_IDENTITY`: the matching private age identity, used by recovery drills. Keep an offline copy outside Zerops and GitHub.
 
-The workflow uses no third-party Actions. GitHub-owned Actions are pinned to full commit SHAs; every other operation is shell plus the Zerops API/zCLI.
+Full CNCF conformance is mandatory for `full`. It is opt-in for `production` and `staging`; uncheck `run_full_conformance` for their normal Sonobuoy-quick-plus-functional and functional-smoke gates, respectively.
 
 ## Operations workflows
 
-All cluster-changing workflows share one GitHub concurrency group and verify the Zerops-side repository lock, so a backup, deployment, resize, maintenance roll, or destroy cannot race another operation.
+Every cluster-changing workflow accepts `profile`, defaults to `full`, shares `zerops-k8s-${{ github.repository }}` concurrency, and validates the profile or capability before installing tools, authenticating, or changing state.
 
-- **Back up Zerops Kubernetes** runs every six hours or on demand. It creates a consistent etcd snapshot, an age-encrypted PKI/signing/encryption bundle, and Longhorn system/volume backups in `k8sbackups`; verifies S3 round trips; prunes only recognised verified recovery sets according to tiered retention; and fails before exhaustion at the configured quota threshold.
-- **Drill Zerops Kubernetes recovery** runs monthly or on demand. It decrypts the newest identity bundle, restores and boots the etcd snapshot in an isolated runner container, queries Kubernetes registry keys, restores the newest Longhorn proof backup as a distinct volume, and requires its content checksum to match.
-- **Roll Zerops Kubernetes nodes and add-ons** runs weekly or on demand. It requires a successful pre-update backup, drains and rolls workers before control planes one at a time, waits for Longhorn health between disruptions, reconciles pinned add-ons, and runs acceptance checks. It does not silently change the pinned Kubernetes version.
-- **Upgrade Zerops Kubernetes version** is owner-triggered and requires the exact reviewed `versions.env` target. It gates the add-on compatibility tuple, proves a fresh recovery point, uploads the replacement image, runs `kubeadm upgrade plan`, and—when plan-only is disabled—upgrades control planes then workers serially before acceptance/conformance.
-- **Resize Zerops Kubernetes** runs on demand. It safely changes the fixed dedicated CPU/RAM/disk contract one node at a time and scales between three and four workers. Disk can grow but cannot shrink; scale-in drains workloads and evicts Longhorn replicas before deleting worker four.
-- **Destroy Zerops Kubernetes** is the explicit teardown and cleanup-recovery path.
+| Workflow | `full` | `production` | `staging` |
+|---|---|---|---|
+| Deploy/reconcile | Supported | Supported | Supported |
+| Destroy | Supported | Supported | Supported |
+| Rolling maintenance | Workers, then three control planes; backup and storage health gates | Workers, then sole control plane; backup and storage health gates; expected API interruption | Worker and sole control plane restart/recovery; expected outage; no backup/storage gates |
+| Controlled upgrade | Supported; full conformance default | Supported; API interruption during the sole-control-plane step | Supported; fixed two-node topology and no backup path |
+| Vertical resize | Supported within the profile contract | Supported within the profile contract | Supported within the fixed two-node contract |
+| Horizontal worker resize | 3 to 4 workers | 2 to 3 workers | Unsupported; rejected before mutation |
+| Backup | Etcd identity plus Longhorn to `k8sbackups` | Etcd identity plus Longhorn to `k8sbackups` | Unsupported; rejected before mutation |
+| Restore drill | Etcd and Longhorn isolated restore | Etcd and Longhorn isolated restore | Unsupported; rejected before mutation |
 
-The backup, rolling-maintenance, vertical up/down, and horizontal up/down paths have each completed successfully against the live project. Sanitized evidence is retained as a GitHub artifact for one day.
+For scheduled jobs, set repository variable `K8S_PROFILE` to the live profile. Manual dispatch inputs override that variable. Supplying an unsupported combination—for example `staging` backup, restore, or a worker count other than one—fails before a Zerops login or any infrastructure mutation.
 
-## Recipe import
+See [operations](docs/operations.md), [upgrades](docs/upgrades.md), [disaster recovery](docs/disaster-recovery.md), [troubleshooting](docs/troubleshooting.md), [security](docs/security.md), and [costs](docs/costs.md).
 
-[`import.yaml`](import.yaml) is the publishable topology. It uses generated secret expressions and contains no credential material. Runtime services start without code because the GitHub workflow owns ordered deployment and validation. [`zerops.yaml`](zerops.yaml) defines node, edge, Prometheus, and Grafana lifecycles.
+## Recipe import and publishing
 
-For an existing project, the workflow uses the first-class recipe endpoints and [`infrastructure/observability.import.yaml`](infrastructure/observability.import.yaml) only as the official-service fallback.
+The imports are alternatives, not services to import side-by-side. Use exactly one topology per project:
+
+- [`import.yaml`](import.yaml) / [raw full import](https://raw.githubusercontent.com/Samyazz/zerops-k8s/main/import.yaml)
+- [`import.production.yaml`](import.production.yaml) / [raw compact-production import](https://raw.githubusercontent.com/Samyazz/zerops-k8s/main/import.production.yaml)
+- [`import.staging.yaml`](import.staging.yaml) / [raw minimal-staging import](https://raw.githubusercontent.com/Samyazz/zerops-k8s/main/import.staging.yaml)
+
+Paste one raw file into **Import a project** in the Zerops dashboard, or download it and run `zcli project project-import FILE`. To operate in the existing project, use the profile-aware deployment workflow; do not paste a second profile import over a running cluster. See [profile and publishing details](docs/profiles.md).
+
+[`zerops.yaml`](zerops.yaml) defines the shared node and edge build/run setups. The public imports contain generated secret expressions and references only—never credential values.
 
 ## Access
 
-- Kubernetes API: `https://k8sedge.zerops:6443` while connected to the Zerops VPN.
-- Headlamp: `http://k8sedge:18081` while connected to the Zerops VPN.
-- Application ingress: `http://k8sedge:8080` over the Zerops VPN. Public exposure is intentionally omitted so enabling one outer subdomain cannot accidentally expose the API or Headlamp ports; publish applications through a separate HTTP-only Zerops edge if needed.
-- Grafana and Kibana: their Zerops service pages/subdomains and Zerops-generated credentials.
-- Kubeconfig and Headlamp credentials: sensitive Zerops project variables suffixed with `RUN_<GitHub run ID>`. The project tag `zerops-k8s.run` identifies the current set; decode `K8S_ADMIN_KUBECONFIG_B64_RUN_<ID>` before use.
+Connect the Zerops VPN before using private cluster endpoints.
 
-See [operations](docs/operations.md), [upgrades](docs/upgrades.md), [disaster recovery](docs/disaster-recovery.md), [troubleshooting](docs/troubleshooting.md), [security](docs/security.md), and [costs](docs/costs.md).
+| Surface | `full` | `production` | `staging` |
+|---|---|---|---|
+| Kubernetes API | `https://k8sedge.zerops:6443` | `https://k8sedge.zerops:6443` | `https://k8scp1.zerops:6443` |
+| Application ingress | `http://k8sedge.zerops:8080` | `http://k8sedge.zerops:8080` | `http://k8sworker1.zerops:32080` |
+| Edge health | `http://k8sedge.zerops:18082/healthz` | `http://k8sedge.zerops:18082/healthz` | Not installed |
+| Headlamp | `http://k8sedge.zerops:18081` | Not installed | Not installed |
+| Grafana/Kibana | Their Zerops service pages and enabled subdomains | Not installed | Not installed |
+| Platform logs/statistics | Zerops service detail for every outer runtime | Zerops service detail for all four runtimes and backup storage health/quota | Zerops service detail for both node runtimes |
+
+The API and Headlamp are VPN-only. Public application routing is deliberately not enabled by the recipe. Retrieve the admin kubeconfig and, for `full`, role-specific Headlamp tokens from sensitive Zerops project variables for the current successful GitHub run. Never put them in repository files or Action artifacts.
 
 ## License
 

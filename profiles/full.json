@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "name": "full",
+  "default": true,
+  "project": {
+    "corePackage": "SERIOUS"
+  },
+  "topology": {
+    "controlPlanes": ["k8scp1", "k8scp2", "k8scp3"],
+    "workers": ["k8sworker1", "k8sworker2", "k8sworker3"],
+    "optionalWorkers": ["k8sworker4"],
+    "controlPlaneEndpoint": "k8sedge.zerops:6443",
+    "edge": {
+      "enabled": true,
+      "hostname": "k8sedge",
+      "containers": 2
+    },
+    "backup": {
+      "enabled": true,
+      "hostname": "k8sbackups",
+      "quotaGb": 25
+    }
+  },
+  "nodeImage": {
+    "mode": "object-storage"
+  },
+  "addons": {
+    "cni": "calico",
+    "gateway": "istio",
+    "gatewayReplicas": 2,
+    "serviceMesh": true,
+    "storage": "longhorn",
+    "storageReplicas": 3,
+    "metricsServerReplicas": 2,
+    "certManager": true,
+    "dashboard": true,
+    "observability": "advanced",
+    "demo": "full",
+    "security": true
+  },
+  "capabilities": {
+    "backup": true,
+    "restore": true,
+    "horizontalResize": true,
+    "storageHealth": true,
+    "controlPlaneFailover": true,
+    "workerDisruption": true
+  },
+  "acceptance": {
+    "level": "full-conformance"
+  },
+  "services": [
+    {"hostname": "k8scp1", "type": "docker@26.1.5", "setup": "controlplane1", "minContainers": 1, "maxContainers": 1, "resources": {"cpuMode": "DEDICATED", "cpu": 4, "ramGb": 8, "diskGb": 20}},
+    {"hostname": "k8scp2", "type": "docker@26.1.5", "setup": "controlplane2", "minContainers": 1, "maxContainers": 1, "resources": {"cpuMode": "DEDICATED", "cpu": 4, "ramGb": 8, "diskGb": 20}},
+    {"hostname": "k8scp3", "type": "docker@26.1.5", "setup": "controlplane3", "minContainers": 1, "maxContainers": 1, "resources": {"cpuMode": "DEDICATED", "cpu": 4, "ramGb": 8, "diskGb": 20}},
+    {"hostname": "k8sworker1", "type": "docker@26.1.5", "setup": "worker1", "minContainers": 1, "maxContainers": 1, "resources": {"cpuMode": "DEDICATED", "cpu": 4, "ramGb": 12, "diskGb": 50}},
+    {"hostname": "k8sworker2", "type": "docker@26.1.5", "setup": "worker2", "minContainers": 1, "maxContainers": 1, "resources": {"cpuMode": "DEDICATED", "cpu": 4, "ramGb": 12, "diskGb": 50}},
+    {"hostname": "k8sworker3", "type": "docker@26.1.5", "setup": "worker3", "minContainers": 1, "maxContainers": 1, "resources": {"cpuMode": "DEDICATED", "cpu": 4, "ramGb": 12, "diskGb": 50}},
+    {"hostname": "k8sedge", "type": "go@1.22", "setup": "edge", "minContainers": 2, "maxContainers": 2, "resources": {"cpuMode": "SHARED", "minCpu": 1, "maxCpu": 2, "minRamGb": 0.5, "maxRamGb": 1, "minDiskGb": 1, "maxDiskGb": 2}},
+    {"hostname": "k8sbackups", "type": "object-storage", "setup": null, "objectStorageSizeGb": 25},
+    {"hostname": "grafanadb", "type": "postgresql:single@17", "setup": null},
+    {"hostname": "prometheusbackups", "type": "object-storage", "setup": null},
+    {"hostname": "grafana", "type": "alpine@3.21", "setup": "grafana"},
+    {"hostname": "prometheus", "type": "alpine@3.21", "setup": "prometheus"},
+    {"hostname": "elkstorage", "type": "elasticsearch:single@8.16", "setup": null},
+    {"hostname": "kibana", "type": "ubuntu@24.04", "setup": "kibana"},
+    {"hostname": "logstash", "type": "ubuntu@24.04", "setup": "logstash"},
+    {"hostname": "apmserver", "type": "ubuntu@24.04", "setup": "apmserver"}
+  ]
+}

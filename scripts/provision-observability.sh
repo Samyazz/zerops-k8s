@@ -6,6 +6,11 @@ source "$ROOT_DIR/scripts/lib.sh"
 
 require_env ZEROPS_TOKEN ZEROPS_PROJECT_ID ZEROPS_CLIENT_ID
 
+if [[ $(profile_json '.addons.observability') != advanced ]]; then
+  log "dedicated observability services are intentionally disabled for profile $K8S_PROFILE"
+  exit 0
+fi
+
 prometheus_payload=$(jq -cn \
   --arg project "$ZEROPS_PROJECT_ID" \
   '{forwardMetricsFromProjectId:$project,prometheusProjectId:$project,projectCorePackage:"SERIOUS"}')

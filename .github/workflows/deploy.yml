@@ -3,6 +3,15 @@ name: Deploy Zerops Kubernetes
 on:
   workflow_dispatch:
     inputs:
+      profile:
+        description: Cluster profile to reconcile
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - production
+          - staging
       run_full_conformance:
         description: Run full CNCF conformance (can take hours)
         required: true
@@ -17,5 +26,6 @@ jobs:
     if: github.actor == github.repository_owner
     uses: ./.github/workflows/reusable-deploy.yml
     with:
+      profile: ${{ inputs.profile }}
       run_full_conformance: ${{ inputs.run_full_conformance }}
     secrets: inherit

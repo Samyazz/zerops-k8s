@@ -1,0 +1,44 @@
+persistence:
+  defaultClass: true
+  defaultClassReplicaCount: 2
+  reclaimPolicy: Retain
+  volumeBindingMode: WaitForFirstConsumer
+
+csi:
+  kubeletRootDir: /var/lib/kubelet
+  podAntiAffinityPreset: hard
+  attacherReplicaCount: 2
+  provisionerReplicaCount: 2
+  resizerReplicaCount: 2
+  snapshotterReplicaCount: 2
+
+defaultSettings:
+  createDefaultDiskLabeledNodes: true
+  defaultReplicaCount: '{"v1":"2","v2":"2"}'
+  replicaAutoBalance: best-effort
+  upgradeChecker: false
+  systemManagedComponentsNodeSelector: "node-role.kubernetes.io/worker:"
+  systemManagedCSIComponentsResourceLimits: '{"csi-attacher":{"requests":{"cpu":"25m","memory":"64Mi"},"limits":{"cpu":"250m","memory":"256Mi"}},"csi-provisioner":{"requests":{"cpu":"25m","memory":"64Mi"},"limits":{"cpu":"250m","memory":"256Mi"}},"csi-resizer":{"requests":{"cpu":"25m","memory":"64Mi"},"limits":{"cpu":"250m","memory":"256Mi"}},"csi-snapshotter":{"requests":{"cpu":"25m","memory":"64Mi"},"limits":{"cpu":"250m","memory":"256Mi"}},"longhorn-csi-plugin":{"requests":{"cpu":"25m","memory":"64Mi"},"limits":{"cpu":"250m","memory":"256Mi"}},"node-driver-registrar":{"requests":{"cpu":"10m","memory":"32Mi"},"limits":{"cpu":"100m","memory":"128Mi"}},"longhorn-liveness-probe":{"requests":{"cpu":"10m","memory":"32Mi"},"limits":{"cpu":"100m","memory":"128Mi"}}}'
+
+longhornManager:
+  log:
+    format: json
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+longhornDriver:
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+
+longhornUI:
+  replicas: 0
+
+ingress:
+  enabled: false

@@ -5,6 +5,9 @@ ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/lib.sh"
 
+profile_capability backup \
+  || die "backup is not supported by Kubernetes profile '$K8S_PROFILE'"
+
 require_env ZEROPS_PROJECT_ID KUBECONFIG
 require curl
 require jq

@@ -5,6 +5,11 @@ ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/lib.sh"
 
+if [[ $(profile_json '.addons.observability') != advanced ]]; then
+  log "dedicated observability retention is not applicable to profile $K8S_PROFILE"
+  exit 0
+fi
+
 load_zerops_env
 require_env ELASTICSEARCH_PASSWORD
 auth=(-u "elastic:$ELASTICSEARCH_PASSWORD")

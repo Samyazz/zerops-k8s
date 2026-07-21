@@ -4,6 +4,16 @@ on:
   schedule:
     - cron: '17 3 * * 1'
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Live cluster profile to roll
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - production
+          - staging
 
 permissions:
   contents: read
@@ -21,12 +31,19 @@ jobs:
       ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_CLIENT_ID: ${{ vars.ZEROPS_CLIENT_ID }}
+      K8S_PROFILE: ${{ inputs.profile || vars.K8S_PROFILE || 'full' }}
       K8S_RECOVERY_AGE_RECIPIENT: ${{ vars.K8S_RECOVERY_AGE_RECIPIENT }}
     steps:
       - name: Check out the exact requested revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+
+      - name: Validate selected profile before mutation
+        shell: bash
+        run: |
+          source ./scripts/lib.sh
+          printf 'Selected profile: %s\n' "$K8S_PROFILE"
 
       - name: Install pinned tools
         shell: bash
@@ -50,16 +67,26 @@ jobs:
           load_zerops_env
           export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
           agent_request k8scp1 GET /v1/cluster/kubeconfig >"$KUBECONFIG"
-          sed -i 's#^[[:space:]]*server:.*#    server: https://k8sedge.zerops:6443#' "$KUBECONFIG"
+          sed -i "s#^[[:space:]]*server:.*#    server: https://${CONTROL_PLANE_ENDPOINT}#" "$KUBECONFIG"
           chmod 0600 "$KUBECONFIG"
           kubectl get --raw=/readyz >/dev/null
           ./scripts/rolling-update.sh
+
+      - name: Record sanitized resolved profile contract
+        if: always()
+        shell: bash
+        run: |
+          source ./scripts/lib.sh
+          mkdir -p "$RUNNER_TEMP/evidence"
+          jq --arg profile "$K8S_PROFILE" \
+            '{profile: $profile, resolvedContract: .}' "$PROFILE_FILE" \
+            >"$RUNNER_TEMP/evidence/profile-contract.json"
 
       - name: Upload sanitized rolling-update evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: zerops-k8s-rolling-update-evidence-${{ github.run_id }}
+          name: zerops-k8s-${{ env.K8S_PROFILE }}-rolling-update-evidence-${{ github.run_id }}
           path: ${{ runner.temp }}/evidence
           if-no-files-found: warn
           retention-days: 1

@@ -3,14 +3,23 @@ name: Resize Zerops Kubernetes
 on:
   workflow_dispatch:
     inputs:
+      profile:
+        description: Live cluster profile to resize
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - production
+          - staging
       desired_workers:
-        description: Worker count (the HA floor is three)
+        description: Worker count (full 3-4, production 2-3, staging fixed at 1)
         required: true
         default: '3'
         type: choice
-        options: ['3', '4']
+        options: ['1', '2', '3', '4']
       control_plane_cpu:
-        description: Dedicated CPU cores per control plane
+        description: CPU cores per control plane (the profile's CPU mode is retained)
         required: true
         default: '4'
         type: string
@@ -25,7 +34,7 @@ on:
         default: '20'
         type: string
       worker_cpu:
-        description: Dedicated CPU cores per worker
+        description: CPU cores per worker (the profile's CPU mode is retained)
         required: true
         default: '4'
         type: string
@@ -56,6 +65,7 @@ jobs:
       ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_CLIENT_ID: ${{ vars.ZEROPS_CLIENT_ID }}
+      K8S_PROFILE: ${{ inputs.profile }}
       K8S_RECOVERY_AGE_RECIPIENT: ${{ vars.K8S_RECOVERY_AGE_RECIPIENT }}
       DESIRED_WORKERS: ${{ inputs.desired_workers }}
       CONTROL_PLANE_CPU: ${{ inputs.control_plane_cpu }}
@@ -69,6 +79,21 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+
+      - name: Validate profile resize capability before mutation
+        shell: bash
+        run: |
+          source ./scripts/lib.sh
+          case "$K8S_PROFILE:$DESIRED_WORKERS" in
+            full:3|full:4|production:2|production:3|staging:1) ;;
+            staging:*)
+              profile_capability horizontalResize \
+                || die "profile staging has one fixed worker and does not support horizontal resize; no changes were made"
+              ;;
+            *)
+              die "worker count $DESIRED_WORKERS is unsupported for profile $K8S_PROFILE; no changes were made"
+              ;;
+          esac
 
       - name: Install pinned tools
         shell: bash
@@ -92,16 +117,26 @@ jobs:
           load_zerops_env
           export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
           agent_request k8scp1 GET /v1/cluster/kubeconfig >"$KUBECONFIG"
-          sed -i 's#^[[:space:]]*server:.*#    server: https://k8sedge.zerops:6443#' "$KUBECONFIG"
+          sed -i "s#^[[:space:]]*server:.*#    server: https://${CONTROL_PLANE_ENDPOINT}#" "$KUBECONFIG"
           chmod 0600 "$KUBECONFIG"
           kubectl get --raw=/readyz >/dev/null
           ./scripts/resize-cluster.sh
+
+      - name: Record sanitized resolved profile contract
+        if: always()
+        shell: bash
+        run: |
+          source ./scripts/lib.sh
+          mkdir -p "$RUNNER_TEMP/evidence"
+          jq --arg profile "$K8S_PROFILE" \
+            '{profile: $profile, resolvedContract: .}' "$PROFILE_FILE" \
+            >"$RUNNER_TEMP/evidence/profile-contract.json"
 
       - name: Upload sanitized resize evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: zerops-k8s-resize-evidence-${{ github.run_id }}
+          name: zerops-k8s-${{ env.K8S_PROFILE }}-resize-evidence-${{ github.run_id }}
           path: ${{ runner.temp }}/evidence
           if-no-files-found: warn
           retention-days: 1

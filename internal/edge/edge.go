@@ -28,10 +28,9 @@ type proxy struct {
 }
 
 func Run() error {
-	proxies := []*proxy{
-		{name: "kubernetes-api", listener: env("K8S_EDGE_API_LISTEN", ":6443"), backends: csvEnv("K8S_EDGE_API_BACKENDS", "k8scp1:6443,k8scp2:6443,k8scp3:6443"), healthScheme: "https", healthPath: "/readyz"},
-		{name: "istio-gateway", listener: env("K8S_EDGE_INGRESS_LISTEN", ":8080"), backends: csvEnv("K8S_EDGE_INGRESS_BACKENDS", "k8sworker1:32080,k8sworker2:32080,k8sworker3:32080")},
-		{name: "headlamp", listener: env("K8S_EDGE_HEADLAMP_LISTEN", ":18081"), backends: csvEnv("K8S_EDGE_HEADLAMP_BACKENDS", "k8sworker1:32081,k8sworker2:32081,k8sworker3:32081")},
+	proxies, err := configuredProxies()
+	if err != nil {
+		return err
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -76,6 +75,47 @@ func Run() error {
 	_ = health.Close()
 	wg.Wait()
 	return nil
+}
+
+func configuredProxies() ([]*proxy, error) {
+	type route struct {
+		name             string
+		enabledKey       string
+		listenerKey      string
+		listenerFallback string
+		backendsKey      string
+		backendsFallback string
+		healthScheme     string
+		healthPath       string
+	}
+	routes := []route{
+		{name: "kubernetes-api", enabledKey: "K8S_EDGE_API_ENABLED", listenerKey: "K8S_EDGE_API_LISTEN", listenerFallback: ":6443", backendsKey: "K8S_EDGE_API_BACKENDS", backendsFallback: "k8scp1:6443,k8scp2:6443,k8scp3:6443", healthScheme: "https", healthPath: "/readyz"},
+		{name: "application-ingress", enabledKey: "K8S_EDGE_INGRESS_ENABLED", listenerKey: "K8S_EDGE_INGRESS_LISTEN", listenerFallback: ":8080", backendsKey: "K8S_EDGE_INGRESS_BACKENDS", backendsFallback: "k8sworker1:32080,k8sworker2:32080,k8sworker3:32080"},
+		{name: "headlamp", enabledKey: "K8S_EDGE_HEADLAMP_ENABLED", listenerKey: "K8S_EDGE_HEADLAMP_LISTEN", listenerFallback: ":18081", backendsKey: "K8S_EDGE_HEADLAMP_BACKENDS", backendsFallback: "k8sworker1:32081,k8sworker2:32081,k8sworker3:32081"},
+	}
+
+	proxies := make([]*proxy, 0, len(routes))
+	for _, route := range routes {
+		enabled, err := boolEnv(route.enabledKey, true)
+		if err != nil {
+			return nil, err
+		}
+		if !enabled {
+			continue
+		}
+		backends := csvEnv(route.backendsKey, route.backendsFallback)
+		if len(backends) == 0 {
+			return nil, fmt.Errorf("%s has no backends", route.name)
+		}
+		proxies = append(proxies, &proxy{
+			name:         route.name,
+			listener:     env(route.listenerKey, route.listenerFallback),
+			backends:     backends,
+			healthScheme: route.healthScheme,
+			healthPath:   route.healthPath,
+		})
+	}
+	return proxies, nil
 }
 
 func (p *proxy) serve(ctx context.Context) error {
@@ -193,4 +233,19 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func boolEnv(key string, fallback bool) (bool, error) {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	if value == "" {
+		return fallback, nil
+	}
+	switch value {
+	case "1", "true", "yes", "on":
+		return true, nil
+	case "0", "false", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("%s must be a boolean", key)
+	}
 }

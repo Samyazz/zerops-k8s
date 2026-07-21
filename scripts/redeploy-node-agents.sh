@@ -34,17 +34,15 @@ canary_created=false
 
 deploy_agent() {
   local service=$1 setup attempt result
-  case "$service" in
-    k8scp1) setup=controlplane1 ;;
-    k8scp2) setup=controlplane2 ;;
-    k8scp3) setup=controlplane3 ;;
-    k8sworker1) setup=worker1 ;;
-    k8sworker2) setup=worker2 ;;
-    k8sworker3) setup=worker3 ;;
-    k8sworker4) setup=worker4 ;;
-    k8sagentcanary) setup=worker4 ;;
-    *) die "no node-agent setup is mapped for $service" ;;
-  esac
+  if [[ "$service" == "$canary_service" ]]; then
+    setup=$(jq -er --arg node "${WORKERS[0]}" '.services[] | select(.hostname == $node) | .setup' "$PROFILE_FILE")
+  else
+    setup=$(jq -er --arg service "$service" '.services[] | select(.hostname == $service) | .setup' "$PROFILE_FILE" 2>/dev/null || true)
+    if [[ -z "$setup" ]]; then
+      setup="worker${service#k8sworker}"
+      [[ "$K8S_PROFILE" == full ]] || setup="${setup}-${K8S_PROFILE}"
+    fi
+  fi
   for attempt in 1 2 3; do
     set +e
     timeout "${ZEROPS_DEPLOY_TIMEOUT:-35m}" zcli service deploy "$service" -P "$ZEROPS_PROJECT_ID" \
@@ -92,7 +90,7 @@ restore_cordon() {
 trap restore_cordon EXIT INT TERM
 
 preflight_agent_delivery() {
-  local import_file worker_cpu worker_ram worker_disk
+  local import_file worker_mode worker_cpu worker_ram worker_disk
 
   if service_exists "$canary_service"; then
     log 'removing a stale node-agent delivery canary from an interrupted run'
@@ -101,9 +99,10 @@ preflight_agent_delivery() {
   worker_cpu=$(cluster_tag_value worker-cpu)
   worker_ram=$(cluster_tag_value worker-ram)
   worker_disk=$(cluster_tag_value worker-disk)
-  worker_cpu=${worker_cpu:-4}
-  worker_ram=${worker_ram:-12}
-  worker_disk=${worker_disk:-50}
+  worker_mode=$(jq -er --arg node "${WORKERS[0]}" '.services[] | select(.hostname == $node) | .resources.cpuMode' "$PROFILE_FILE")
+  worker_cpu=${worker_cpu:-$(jq -er --arg node "${WORKERS[0]}" '.services[] | select(.hostname == $node) | .resources.cpu' "$PROFILE_FILE")}
+  worker_ram=${worker_ram:-$(jq -er --arg node "${WORKERS[0]}" '.services[] | select(.hostname == $node) | .resources.ramGb' "$PROFILE_FILE")}
+  worker_disk=${worker_disk:-$(jq -er --arg node "${WORKERS[0]}" '.services[] | select(.hostname == $node) | .resources.diskGb' "$PROFILE_FILE")}
   [[ "$worker_cpu" =~ ^[0-9]+$ && "$worker_ram" =~ ^[0-9]+$ && "$worker_disk" =~ ^[0-9]+$ ]] \
     || die 'worker resource tags must be whole numbers before the rollout canary is created'
 
@@ -115,7 +114,7 @@ preflight_agent_delivery() {
     '    minContainers: 1' \
     '    maxContainers: 1' \
     '    verticalAutoscaling:' \
-    '      cpuMode: DEDICATED' \
+    "      cpuMode: $worker_mode" \
     "      minCpu: $worker_cpu" \
     "      maxCpu: $worker_cpu" \
     "      startCpuCoreCount: $worker_cpu" \
@@ -147,16 +146,25 @@ if [[ "$push_agent_code" == true ]]; then
   prepare_node_agent_artifact
   agent_artifact_dir=$NODE_AGENT_ARTIFACT_DIR
   version_name=$NODE_AGENT_VERSION_NAME
-  preflight_agent_delivery
+  if [[ "$K8S_PROFILE" != staging ]]; then
+    preflight_agent_delivery
+  else
+    log 'staging forbids orbiting services; skipping the disposable rollout canary'
+  fi
   if [[ "$canary_only" == true ]]; then
     log 'node-agent delivery canary-only check completed; no Kubernetes node was changed'
     exit 0
   fi
 fi
 
-order=(k8sworker1 k8sworker2 k8sworker3)
-if service_exists k8sworker4; then order+=(k8sworker4); fi
-order+=(k8scp2 k8scp3 k8scp1)
+order=("${WORKERS[@]}")
+mapfile -t optional_workers < <(profile_json '.topology.optionalWorkers[]?')
+for node in "${optional_workers[@]}"; do
+  if service_exists "$node"; then order+=("$node"); fi
+done
+for ((index=${#CONTROL_PLANES[@]}-1; index>=0; index--)); do
+  order+=("${CONTROL_PLANES[index]}")
+done
 targets=("${order[@]}")
 if (( $# )); then
   targets=("$@")
@@ -169,15 +177,17 @@ init_response=$(agent_request k8scp1 POST /v1/cluster/init)
 ca_hash=$(jq -er .caHash <<<"$init_response")
 join_payload=$(jq -cn --arg hash "$ca_hash" '{caHash:$hash}')
 
-mapfile -t interrupted_backups < <(
-  kubectl -n longhorn-system get systembackups.longhorn.io -o json | jq -r \
-    '.items[] | select(.status.state != "Ready") | .metadata.name'
-)
-if (( ${#interrupted_backups[@]} > 0 )); then
-  log 'cleaning the disposable proof volume from an interrupted backup test'
-  kubectl -n longhorn-system delete systembackups.longhorn.io "${interrupted_backups[@]}" --wait=false >/dev/null
-  kubectl -n zerops-backup-validation delete pvc longhorn-backup-proof \
-    --ignore-not-found --wait=true >/dev/null
+if profile_capability storageHealth; then
+  mapfile -t interrupted_backups < <(
+    kubectl -n longhorn-system get systembackups.longhorn.io -o json | jq -r \
+      '.items[] | select(.status.state != "Ready") | .metadata.name'
+  )
+  if (( ${#interrupted_backups[@]} > 0 )); then
+    log 'cleaning the disposable proof volume from an interrupted backup test'
+    kubectl -n longhorn-system delete systembackups.longhorn.io "${interrupted_backups[@]}" --wait=false >/dev/null
+    kubectl -n zerops-backup-validation delete pvc longhorn-backup-proof \
+      --ignore-not-found --wait=true >/dev/null
+  fi
 fi
 
 for service in "${targets[@]}"; do
@@ -240,8 +250,10 @@ for service in "${order[@]}"; do
     sleep 3
   done
   if [[ "$service" == k8sworker* ]]; then
-    kubectl label node "$service" node-role.kubernetes.io/worker='' \
-      node.longhorn.io/create-default-disk=true --overwrite >/dev/null
+    kubectl label node "$service" node-role.kubernetes.io/worker='' --overwrite >/dev/null
+    if profile_capability storageHealth; then
+      kubectl label node "$service" node.longhorn.io/create-default-disk=true --overwrite >/dev/null
+    fi
   fi
   kubectl wait "node/$service" --for=condition=Ready --timeout=15m
   if [[ "$disk_replacement" == true ]]; then

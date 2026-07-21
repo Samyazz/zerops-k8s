@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "name": "staging",
+  "default": false,
+  "project": {
+    "corePackage": "LIGHT"
+  },
+  "topology": {
+    "controlPlanes": ["k8scp1"],
+    "workers": ["k8sworker1"],
+    "optionalWorkers": [],
+    "controlPlaneEndpoint": "k8scp1.zerops:6443",
+    "edge": {
+      "enabled": false,
+      "hostname": null,
+      "containers": 0
+    },
+    "backup": {
+      "enabled": false,
+      "hostname": null,
+      "quotaGb": 0
+    }
+  },
+  "nodeImage": {
+    "mode": "local"
+  },
+  "addons": {
+    "cni": "calico",
+    "gateway": "traefik",
+    "gatewayReplicas": 1,
+    "serviceMesh": false,
+    "storage": "none",
+    "storageReplicas": 0,
+    "metricsServerReplicas": 1,
+    "certManager": false,
+    "dashboard": false,
+    "observability": "platform",
+    "demo": "staging",
+    "security": true
+  },
+  "capabilities": {
+    "backup": false,
+    "restore": false,
+    "horizontalResize": false,
+    "storageHealth": false,
+    "controlPlaneFailover": false,
+    "workerDisruption": false
+  },
+  "acceptance": {
+    "level": "smoke"
+  },
+  "services": [
+    {"hostname": "k8scp1", "type": "docker@26.1.5", "setup": "controlplane1-staging", "minContainers": 1, "maxContainers": 1, "resources": {"cpuMode": "SHARED", "cpu": 2, "ramGb": 4, "diskGb": 20}},
+    {"hostname": "k8sworker1", "type": "docker@26.1.5", "setup": "worker1-staging", "minContainers": 1, "maxContainers": 1, "resources": {"cpuMode": "SHARED", "cpu": 2, "ramGb": 4, "diskGb": 20}}
+  ]
+}

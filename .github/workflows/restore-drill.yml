@@ -4,6 +4,16 @@ on:
   schedule:
     - cron: '13 4 1 * *'
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Live cluster profile (staging does not support restore drills)
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - production
+          - staging
 
 permissions:
   contents: read
@@ -21,6 +31,7 @@ jobs:
       ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_CLIENT_ID: ${{ vars.ZEROPS_CLIENT_ID }}
+      K8S_PROFILE: ${{ inputs.profile || vars.K8S_PROFILE || 'full' }}
       K8S_RECOVERY_AGE_RECIPIENT: ${{ vars.K8S_RECOVERY_AGE_RECIPIENT }}
       K8S_RECOVERY_AGE_IDENTITY: ${{ secrets.K8S_RECOVERY_AGE_IDENTITY }}
     steps:
@@ -37,6 +48,13 @@ jobs:
             echo 'Only the repository owner may run recovery drills.' >&2
             exit 1
           }
+
+      - name: Validate profile restore capability before mutation
+        shell: bash
+        run: |
+          source ./scripts/lib.sh
+          profile_capability restore \
+            || die "profile $K8S_PROFILE does not support restore drills; no changes were made"
 
       - name: Install pinned tools
         shell: bash
@@ -62,18 +80,28 @@ jobs:
           export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
           agent_request k8scp1 GET /v1/cluster/kubeconfig >"$KUBECONFIG"
           log 'received the admin kubeconfig; validating API readiness'
-          sed -i 's#^[[:space:]]*server:.*#    server: https://k8sedge.zerops:6443#' "$KUBECONFIG"
+          sed -i "s#^[[:space:]]*server:.*#    server: https://${CONTROL_PLANE_ENDPOINT}#" "$KUBECONFIG"
           chmod 0600 "$KUBECONFIG"
           kubectl get --raw=/readyz >/dev/null
           log 'Kubernetes API is ready; starting the fresh backup and restore drill'
           ./scripts/backup-cluster.sh
           ./scripts/restore-drill.sh
 
+      - name: Record sanitized resolved profile contract
+        if: always()
+        shell: bash
+        run: |
+          source ./scripts/lib.sh
+          mkdir -p "$RUNNER_TEMP/evidence"
+          jq --arg profile "$K8S_PROFILE" \
+            '{profile: $profile, resolvedContract: .}' "$PROFILE_FILE" \
+            >"$RUNNER_TEMP/evidence/profile-contract.json"
+
       - name: Upload sanitized restore evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: zerops-k8s-restore-drill-evidence-${{ github.run_id }}
+          name: zerops-k8s-${{ env.K8S_PROFILE }}-restore-drill-evidence-${{ github.run_id }}
           path: ${{ runner.temp }}/evidence
           if-no-files-found: warn
           retention-days: 1

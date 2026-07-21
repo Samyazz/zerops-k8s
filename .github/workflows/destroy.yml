@@ -3,6 +3,15 @@ name: Destroy Zerops Kubernetes
 on:
   workflow_dispatch:
     inputs:
+      profile:
+        description: Live cluster profile to destroy
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - production
+          - staging
       stuck_process_id:
         description: Optional in-flight Kubernetes node process to cancel before recovery
         required: false
@@ -23,12 +32,18 @@ jobs:
     env:
       ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      K8S_PROFILE: ${{ inputs.profile }}
       STUCK_PROCESS_ID: ${{ inputs.stuck_process_id }}
     steps:
       - name: Check out source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+      - name: Validate selected profile before mutation
+        shell: bash
+        run: |
+          source ./scripts/lib.sh
+          printf 'Selected profile: %s\n' "$K8S_PROFILE"
       - name: Install pinned tools
         shell: bash
         run: ./scripts/install-tools.sh
@@ -41,3 +56,24 @@ jobs:
           [[ -z "$STUCK_PROCESS_ID" ]] || ./scripts/cancel-process.sh "$STUCK_PROCESS_ID"
           ./scripts/recover-node-agents.sh
           ./scripts/destroy-cluster.sh
+
+      - name: Record sanitized destroy evidence
+        if: always()
+        shell: bash
+        env:
+          OPERATION_STATUS: ${{ job.status }}
+        run: |
+          source ./scripts/lib.sh
+          mkdir -p "$RUNNER_TEMP/evidence"
+          jq --arg profile "$K8S_PROFILE" --arg status "$OPERATION_STATUS" \
+            '{profile: $profile, operation: "destroy", status: $status, resolvedContract: .}' \
+            "$PROFILE_FILE" >"$RUNNER_TEMP/evidence/profile-contract.json"
+
+      - name: Upload sanitized destroy evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: zerops-k8s-${{ env.K8S_PROFILE }}-destroy-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/evidence
+          if-no-files-found: warn
+          retention-days: 1

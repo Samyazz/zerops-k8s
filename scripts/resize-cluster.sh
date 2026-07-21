@@ -12,38 +12,53 @@ require jq
 require kubectl
 require zcli
 
-cp_cpu=${CONTROL_PLANE_CPU:-4}
-cp_ram=${CONTROL_PLANE_RAM_GB:-8}
-cp_disk=${CONTROL_PLANE_DISK_GB:-20}
-worker_cpu=${WORKER_CPU:-4}
-worker_ram=${WORKER_RAM_GB:-12}
-worker_disk=${WORKER_DISK_GB:-50}
-desired_workers=${DESIRED_WORKERS:-3}
+cp_mode=$(jq -er --arg node "${CONTROL_PLANES[0]}" '.services[] | select(.hostname == $node) | .resources.cpuMode' "$PROFILE_FILE")
+cp_min_cpu=$(jq -er --arg node "${CONTROL_PLANES[0]}" '.services[] | select(.hostname == $node) | .resources.cpu' "$PROFILE_FILE")
+cp_min_ram=$(jq -er --arg node "${CONTROL_PLANES[0]}" '.services[] | select(.hostname == $node) | .resources.ramGb' "$PROFILE_FILE")
+cp_min_disk=$(jq -er --arg node "${CONTROL_PLANES[0]}" '.services[] | select(.hostname == $node) | .resources.diskGb' "$PROFILE_FILE")
+worker_mode=$(jq -er --arg node "${WORKERS[0]}" '.services[] | select(.hostname == $node) | .resources.cpuMode' "$PROFILE_FILE")
+worker_min_cpu=$(jq -er --arg node "${WORKERS[0]}" '.services[] | select(.hostname == $node) | .resources.cpu' "$PROFILE_FILE")
+worker_min_ram=$(jq -er --arg node "${WORKERS[0]}" '.services[] | select(.hostname == $node) | .resources.ramGb' "$PROFILE_FILE")
+worker_min_disk=$(jq -er --arg node "${WORKERS[0]}" '.services[] | select(.hostname == $node) | .resources.diskGb' "$PROFILE_FILE")
+cp_cpu=${CONTROL_PLANE_CPU:-$cp_min_cpu}
+cp_ram=${CONTROL_PLANE_RAM_GB:-$cp_min_ram}
+cp_disk=${CONTROL_PLANE_DISK_GB:-$cp_min_disk}
+worker_cpu=${WORKER_CPU:-$worker_min_cpu}
+worker_ram=${WORKER_RAM_GB:-$worker_min_ram}
+worker_disk=${WORKER_DISK_GB:-$worker_min_disk}
+baseline_workers=${#WORKERS[@]}
+mapfile -t optional_workers < <(profile_json '.topology.optionalWorkers[]?')
+max_workers=$((baseline_workers + ${#optional_workers[@]}))
+desired_workers=${DESIRED_WORKERS:-$baseline_workers}
 
 validate_integer() {
   local name=$1 value=$2 minimum=$3 maximum=$4
   [[ "$value" =~ ^[0-9]+$ ]] || die "$name must be an integer"
   (( value >= minimum && value <= maximum )) || die "$name must be between $minimum and $maximum"
 }
-validate_integer CONTROL_PLANE_CPU "$cp_cpu" 4 32
-validate_integer CONTROL_PLANE_RAM_GB "$cp_ram" 8 128
-validate_integer CONTROL_PLANE_DISK_GB "$cp_disk" 20 500
-validate_integer WORKER_CPU "$worker_cpu" 4 32
-validate_integer WORKER_RAM_GB "$worker_ram" 12 128
-validate_integer WORKER_DISK_GB "$worker_disk" 50 1000
-[[ "$desired_workers" == 3 || "$desired_workers" == 4 ]] \
-  || die 'DESIRED_WORKERS must be 3 or 4; three is the HA and Longhorn replica floor'
+validate_integer CONTROL_PLANE_CPU "$cp_cpu" "$cp_min_cpu" 32
+validate_integer CONTROL_PLANE_RAM_GB "$cp_ram" "$cp_min_ram" 128
+validate_integer CONTROL_PLANE_DISK_GB "$cp_disk" "$cp_min_disk" 500
+validate_integer WORKER_CPU "$worker_cpu" "$worker_min_cpu" 32
+validate_integer WORKER_RAM_GB "$worker_ram" "$worker_min_ram" 128
+validate_integer WORKER_DISK_GB "$worker_disk" "$worker_min_disk" 1000
+validate_integer DESIRED_WORKERS "$desired_workers" "$baseline_workers" "$max_workers"
+if (( desired_workers != baseline_workers )); then
+  profile_capability horizontalResize \
+    || die "horizontal resize is not supported by Kubernetes profile '$K8S_PROFILE'"
+fi
 
 current_node=
 current_cordoned=false
-partial_worker4=false
+partial_optional_worker=false
+current_optional_worker=
 restore_cordon() {
   if [[ "$current_cordoned" == true && -n "$current_node" ]]; then
     kubectl uncordon "$current_node" >/dev/null 2>&1 || true
   fi
-  if [[ "$partial_worker4" == true ]]; then
-    log 'removing a partially provisioned fourth worker after resize failure or cancellation'
-    zcli service delete k8sworker4 -P "$ZEROPS_PROJECT_ID" --confirm >/dev/null 2>&1 || true
+  if [[ "$partial_optional_worker" == true && -n "$current_optional_worker" ]]; then
+    log "removing a partially provisioned optional worker after resize failure or cancellation: $current_optional_worker"
+    zcli service delete "$current_optional_worker" -P "$ZEROPS_PROJECT_ID" --confirm >/dev/null 2>&1 || true
   fi
 }
 trap restore_cordon EXIT INT TERM
@@ -63,7 +78,7 @@ refresh_inventory() {
 }
 
 scale_node() {
-  local node=$1 cpu=$2 ram=$3 disk=$4 service_id current_disk process_id
+  local node=$1 cpu_mode=$2 cpu=$3 ram=$4 disk=$5 service_id current_disk process_id
   service_id=$(jq -er --arg node "$node" '.list[] | select(.name == $node) | .id' "$service_inventory")
   current_disk=$(jq -er --arg node "$node" '
     .list[] | select(.name == $node)
@@ -72,10 +87,10 @@ scale_node() {
   jq -en --argjson requested "$disk" --argjson current "$current_disk" '$requested >= $current' >/dev/null \
     || die "disk downsizing is not supported by Zerops: $node currently has ${current_disk}GB"
 
-  if jq -e --arg node "$node" --argjson cpu "$cpu" --argjson ram "$ram" --argjson disk "$disk" '
+  if jq -e --arg node "$node" --arg cpu_mode "$cpu_mode" --argjson cpu "$cpu" --argjson ram "$ram" --argjson disk "$disk" '
     .list[] | select(.name == $node)
     | (.currentAutoscaling.verticalAutoscaling // .customAutoscaling.verticalAutoscaling) as $v
-    | $v.cpuMode == "DEDICATED"
+    | $v.cpuMode == $cpu_mode
       and $v.minResource.cpuCoreCount == $cpu and $v.maxResource.cpuCoreCount == $cpu
       and $v.startCpuCoreCount == $cpu
       and $v.minResource.memoryGBytes == $ram and $v.maxResource.memoryGBytes == $ram
@@ -91,10 +106,10 @@ scale_node() {
   current_cordoned=true
   safe_drain "$node"
 
-  jq -cn --argjson cpu "$cpu" --argjson ram "$ram" --argjson disk "$disk" '{
+  jq -cn --arg cpu_mode "$cpu_mode" --argjson cpu "$cpu" --argjson ram "$ram" --argjson disk "$disk" '{
     customAutoscaling:{
       verticalAutoscaling:{
-        cpuMode:"DEDICATED",
+        cpuMode:$cpu_mode,
         minResource:{cpuCoreCount:$cpu,memoryGBytes:$ram,diskGBytes:$disk},
         maxResource:{cpuCoreCount:$cpu,memoryGBytes:$ram,diskGBytes:$disk},
         startCpuCoreCount:$cpu,
@@ -117,20 +132,20 @@ scale_node() {
   refresh_inventory
 }
 
-add_fourth_worker() {
-  local import_file init_response ca_hash deadline
-  log 'horizontally scaling from three workers to four'
+add_optional_worker() {
+  local node=$1 import_file init_response ca_hash deadline setup
+  log "horizontally scaling from $baseline_workers workers to $max_workers"
   prepare_node_agent_artifact
   import_file=$(mktemp)
   sed -n '1,1p' "$ROOT_DIR/import.yaml" >"$import_file"
   {
     printf 'services:\n'
-    printf '  - hostname: k8sworker4\n'
+    printf '  - hostname: %s\n' "$node"
     printf '    type: docker@26.1.5\n'
     printf '    minContainers: 1\n'
     printf '    maxContainers: 1\n'
     printf '    verticalAutoscaling:\n'
-    printf '      cpuMode: DEDICATED\n'
+    printf '      cpuMode: %s\n' "$worker_mode"
     printf '      minCpu: %s\n' "$worker_cpu"
     printf '      maxCpu: %s\n' "$worker_cpu"
     printf '      startCpuCoreCount: %s\n' "$worker_cpu"
@@ -140,88 +155,102 @@ add_fourth_worker() {
     printf '      maxDisk: %s\n' "$worker_disk"
     printf '      swapEnabled: false\n'
   } >>"$import_file"
-  partial_worker4=true
+  partial_optional_worker=true
+  current_optional_worker=$node
   zcli project service-import "$import_file" -P "$ZEROPS_PROJECT_ID"
   rm -f "$import_file"
 
-  zcli service deploy k8sworker4 -P "$ZEROPS_PROJECT_ID" --setup worker4 \
-    --version-name "${NODE_AGENT_VERSION_NAME}-worker4" \
+  setup="worker${node#k8sworker}"
+  [[ "$K8S_PROFILE" == full ]] || setup="${setup}-${K8S_PROFILE}"
+  zcli service deploy "$node" -P "$ZEROPS_PROJECT_ID" --setup "$setup" \
+    --version-name "${NODE_AGENT_VERSION_NAME}-${node}" \
     --working-dir "$NODE_AGENT_ARTIFACT_DIR" --path-to-file-or-dir .
-  wait_for_agent k8sworker4
-  agent_request k8sworker4 POST /v1/node/start >/dev/null
+  wait_for_agent "$node"
+  agent_request "$node" POST /v1/node/start >/dev/null
   init_response=$(agent_request k8scp1 POST /v1/cluster/init)
   ca_hash=$(jq -er .caHash <<<"$init_response")
-  agent_request k8sworker4 POST /v1/cluster/join "$(jq -cn --arg hash "$ca_hash" '{caHash:$hash}')" >/dev/null
+  agent_request "$node" POST /v1/cluster/join "$(jq -cn --arg hash "$ca_hash" '{caHash:$hash}')" >/dev/null
   deadline=$((SECONDS + 300))
-  until kubectl get node/k8sworker4 >/dev/null 2>&1; do
-    (( SECONDS < deadline )) || die 'k8sworker4 did not register after joining the cluster'
+  until kubectl get "node/$node" >/dev/null 2>&1; do
+    (( SECONDS < deadline )) || die "$node did not register after joining the cluster"
     sleep 3
   done
-  kubectl label node k8sworker4 node-role.kubernetes.io/worker='' node.longhorn.io/create-default-disk=true --overwrite
-  kubectl wait node/k8sworker4 --for=condition=Ready --timeout=15m
+  kubectl label node "$node" node-role.kubernetes.io/worker='' --overwrite
+  [[ $(profile_json '.addons.storage') != longhorn ]] \
+    || kubectl label node "$node" node.longhorn.io/create-default-disk=true --overwrite
+  kubectl wait "node/$node" --for=condition=Ready --timeout=15m
   kubectl -n calico-system wait pod -l k8s-app=calico-node \
-    --field-selector spec.nodeName=k8sworker4 --for=condition=Ready --timeout=10m
-  kubectl -n istio-system wait pod -l k8s-app=istio-cni-node \
-    --field-selector spec.nodeName=k8sworker4 --for=condition=Ready --timeout=10m
-  kubectl -n istio-system wait pod -l app=ztunnel \
-    --field-selector spec.nodeName=k8sworker4 --for=condition=Ready --timeout=10m
-  kubectl -n longhorn-system wait pod -l app=longhorn-manager \
-    --field-selector spec.nodeName=k8sworker4 --for=condition=Ready --timeout=10m
-  wait_longhorn_disk_ready k8sworker4
-  wait_longhorn_healthy
-  partial_worker4=false
+    --field-selector "spec.nodeName=$node" --for=condition=Ready --timeout=10m
+  if [[ $(profile_json '.addons.serviceMesh') == true ]]; then
+    kubectl -n istio-system wait pod -l k8s-app=istio-cni-node \
+      --field-selector "spec.nodeName=$node" --for=condition=Ready --timeout=10m
+    kubectl -n istio-system wait pod -l app=ztunnel \
+      --field-selector "spec.nodeName=$node" --for=condition=Ready --timeout=10m
+  fi
+  if profile_capability storageHealth; then
+    kubectl -n longhorn-system wait pod -l app=longhorn-manager \
+      --field-selector "spec.nodeName=$node" --for=condition=Ready --timeout=10m
+    wait_longhorn_disk_ready "$node"
+    wait_longhorn_healthy
+  fi
+  partial_optional_worker=false
+  current_optional_worker=
   refresh_inventory
 }
 
-remove_fourth_worker() {
-  local deadline replicas
-  log 'horizontally scaling from four workers to the three-worker HA floor'
-  wait_longhorn_healthy
-  if kubectl -n longhorn-system get nodes.longhorn.io k8sworker4 >/dev/null 2>&1; then
-    kubectl -n longhorn-system patch nodes.longhorn.io k8sworker4 --type=merge \
+remove_optional_worker() {
+  local node=$1 deadline replicas
+  log "horizontally scaling from $max_workers workers to the $baseline_workers-worker profile floor"
+  profile_capability storageHealth && wait_longhorn_healthy
+  if profile_capability storageHealth && kubectl -n longhorn-system get "nodes.longhorn.io/$node" >/dev/null 2>&1; then
+    kubectl -n longhorn-system patch "nodes.longhorn.io/$node" --type=merge \
       -p '{"spec":{"allowScheduling":false,"evictionRequested":true}}' >/dev/null
     deadline=$((SECONDS + 1800))
     while (( SECONDS < deadline )); do
       replicas=$(kubectl -n longhorn-system get replicas.longhorn.io -o json | jq \
-        '[.items[] | select(.spec.nodeID == "k8sworker4")] | length')
+        --arg node "$node" '[.items[] | select(.spec.nodeID == $node)] | length')
       [[ "$replicas" -eq 0 ]] && break
       sleep 10
     done
-    [[ ${replicas:-0} -eq 0 ]] || die 'Longhorn replica eviction from k8sworker4 timed out'
+    [[ ${replicas:-0} -eq 0 ]] || die "Longhorn replica eviction from $node timed out"
   fi
-  current_node=k8sworker4
-  kubectl cordon k8sworker4 >/dev/null
+  current_node=$node
+  kubectl cordon "$node" >/dev/null
   current_cordoned=true
-  safe_drain k8sworker4
-  agent_request k8sworker4 POST /v1/cluster/reset >/dev/null
-  kubectl delete node k8sworker4 --ignore-not-found >/dev/null
-  kubectl -n longhorn-system delete nodes.longhorn.io k8sworker4 --ignore-not-found >/dev/null
-  zcli service delete k8sworker4 -P "$ZEROPS_PROJECT_ID" --confirm
+  safe_drain "$node"
+  agent_request "$node" POST /v1/cluster/reset >/dev/null
+  kubectl delete "node/$node" --ignore-not-found >/dev/null
+  profile_capability storageHealth \
+    && kubectl -n longhorn-system delete "nodes.longhorn.io/$node" --ignore-not-found >/dev/null
+  zcli service delete "$node" -P "$ZEROPS_PROJECT_ID" --confirm
   current_cordoned=false
   current_node=
   refresh_inventory
-  wait_longhorn_healthy
+  profile_capability storageHealth && wait_longhorn_healthy
 }
 
-log 'taking mandatory pre-resize backups'
-"$ROOT_DIR/scripts/backup-cluster.sh"
-
-if [[ "$desired_workers" == 4 ]] && ! service_present k8sworker4; then
-  add_fourth_worker
+if profile_capability backup; then
+  log 'taking mandatory pre-resize backups'
+  "$ROOT_DIR/scripts/backup-cluster.sh"
 fi
 
-for node in k8sworker1 k8sworker2 k8sworker3; do
-  scale_node "$node" "$worker_cpu" "$worker_ram" "$worker_disk"
-done
-if service_present k8sworker4; then
-  scale_node k8sworker4 "$worker_cpu" "$worker_ram" "$worker_disk"
+optional_worker=${optional_workers[0]:-}
+if (( desired_workers > baseline_workers )) && [[ -n "$optional_worker" ]] && ! service_present "$optional_worker"; then
+  add_optional_worker "$optional_worker"
 fi
-for node in k8scp2 k8scp3 k8scp1; do
-  scale_node "$node" "$cp_cpu" "$cp_ram" "$cp_disk"
+
+for node in "${WORKERS[@]}"; do
+  scale_node "$node" "$worker_mode" "$worker_cpu" "$worker_ram" "$worker_disk"
+done
+if [[ -n "$optional_worker" ]] && service_present "$optional_worker"; then
+  scale_node "$optional_worker" "$worker_mode" "$worker_cpu" "$worker_ram" "$worker_disk"
+fi
+for node in "${CONTROL_PLANES[@]}"; do
+  scale_node "$node" "$cp_mode" "$cp_cpu" "$cp_ram" "$cp_disk"
 done
 
-if [[ "$desired_workers" == 3 ]] && service_present k8sworker4; then
-  remove_fourth_worker
+if (( desired_workers == baseline_workers )) && [[ -n "$optional_worker" ]] && service_present "$optional_worker"; then
+  remove_optional_worker "$optional_worker"
 fi
 
 set_cluster_tag workers "$desired_workers"
@@ -233,7 +262,7 @@ set_cluster_tag worker-ram "$worker_ram"
 set_cluster_tag worker-disk "$worker_disk"
 
 kubectl wait --for=condition=Ready nodes --all --timeout=10m
-[[ $(kubectl get nodes -l node-role.kubernetes.io/control-plane -o name | wc -l) -eq 3 ]]
+[[ $(kubectl get nodes -l node-role.kubernetes.io/control-plane -o name | wc -l) -eq ${#CONTROL_PLANES[@]} ]]
 [[ $(kubectl get nodes -l node-role.kubernetes.io/worker -o name | wc -l) -eq "$desired_workers" ]]
 "$ROOT_DIR/scripts/verify-node-resources.sh" "${RUNNER_TEMP:-$ROOT_DIR/artifacts}/evidence/resize/resources.json"
 kubectl get nodes -o wide >"${RUNNER_TEMP:-$ROOT_DIR/artifacts}/evidence/resize/nodes.txt"

@@ -406,6 +406,243 @@ zerops:
           path: /healthz
       start: ./dist/zerops-k8s
 
+  # Compact-production nodes retain the S3-backed image cache and recovery
+  # storage, but deliberately carry no references to the full observability
+  # services. The aliases keep the build/runtime mechanism identical on all
+  # three nodes while each setup supplies its own role and identity.
+  - setup: controlplane1-production
+    build: &productionNodeBuild
+      base: go@1.22
+      buildCommands:
+        - mkdir -p dist
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o s3-fetch ./cmd/s3-fetch
+      deployFiles:
+        - .
+    deploy: &productionNodeDeploy
+      temporaryShutdown: true
+      readinessCheck:
+        httpGet:
+          port: 18080
+          path: /healthz
+    run:
+      base: docker@26.1.5
+      ports: &productionNodePorts
+        - port: 18080
+          httpSupport: false
+          protocol: tcp
+      initCommands: &productionNodeInit
+        - |
+          set -eu
+          if ! docker image inspect "$K8S_NODE_IMAGE" >/dev/null 2>&1; then
+            ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_OBJECT" -output /home/zerops/node-image.tar.gz -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+            ./s3-fetch -endpoint "$K8S_IMAGE_STORAGE_ENDPOINT" -bucket "$K8S_IMAGE_STORAGE_BUCKET" -object "$K8S_IMAGE_SHA256_OBJECT" -output /home/zerops/node-image.tar.gz.sha256 -access-key "$AWS_ACCESS_KEY_ID" -secret-key "$AWS_SECRET_ACCESS_KEY"
+            sed -i 's#  .*#  node-image.tar.gz#' /home/zerops/node-image.tar.gz.sha256
+            (cd /home/zerops && sha256sum -c node-image.tar.gz.sha256)
+            docker image load -i /home/zerops/node-image.tar.gz
+            rm -f /home/zerops/node-image.tar.gz /home/zerops/node-image.tar.gz.sha256
+          fi
+        - sudo mkdir -p /var/lib/zerops-k8s
+        - sudo chown -R zerops:zerops /var/lib/zerops-k8s
+        - sudo mount --make-rshared /
+      envVariables:
+        K8S_MODE: node
+        K8S_NODE_ROLE: control-plane
+        K8S_NODE_NAME: k8scp1
+        AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
+        AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
+        AWS_DEFAULT_REGION: us-east-1
+        K8S_IMAGE_STORAGE_ENDPOINT: ${k8sbackups_apiUrl}
+        K8S_IMAGE_STORAGE_BUCKET: ${k8sbackups_bucketName}
+      healthCheck: &productionNodeHealth
+        httpGet:
+          port: 18080
+          path: /healthz
+      start: ./dist/zerops-k8s
+
+  - setup: worker1-production
+    build: *productionNodeBuild
+    deploy: *productionNodeDeploy
+    run:
+      base: docker@26.1.5
+      ports: *productionNodePorts
+      initCommands: *productionNodeInit
+      envVariables:
+        K8S_MODE: node
+        K8S_NODE_ROLE: worker
+        K8S_NODE_NAME: k8sworker1
+        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
+        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
+        AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
+        AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
+        AWS_DEFAULT_REGION: us-east-1
+        K8S_IMAGE_STORAGE_ENDPOINT: ${k8sbackups_apiUrl}
+        K8S_IMAGE_STORAGE_BUCKET: ${k8sbackups_bucketName}
+      healthCheck: *productionNodeHealth
+      start: ./dist/zerops-k8s
+
+  - setup: worker2-production
+    build: *productionNodeBuild
+    deploy: *productionNodeDeploy
+    run:
+      base: docker@26.1.5
+      ports: *productionNodePorts
+      initCommands: *productionNodeInit
+      envVariables:
+        K8S_MODE: node
+        K8S_NODE_ROLE: worker
+        K8S_NODE_NAME: k8sworker2
+        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
+        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
+        AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
+        AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
+        AWS_DEFAULT_REGION: us-east-1
+        K8S_IMAGE_STORAGE_ENDPOINT: ${k8sbackups_apiUrl}
+        K8S_IMAGE_STORAGE_BUCKET: ${k8sbackups_bucketName}
+      healthCheck: *productionNodeHealth
+      start: ./dist/zerops-k8s
+
+  # Optional compact-production worker, created only by the explicit 2→3
+  # horizontal-resize operation and removed again on 3→2.
+  - setup: worker3-production
+    build: *productionNodeBuild
+    deploy: *productionNodeDeploy
+    run:
+      base: docker@26.1.5
+      ports: *productionNodePorts
+      initCommands: *productionNodeInit
+      envVariables:
+        K8S_MODE: node
+        K8S_NODE_ROLE: worker
+        K8S_NODE_NAME: k8sworker3
+        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
+        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
+        AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
+        AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
+        AWS_DEFAULT_REGION: us-east-1
+        K8S_IMAGE_STORAGE_ENDPOINT: ${k8sbackups_apiUrl}
+        K8S_IMAGE_STORAGE_BUCKET: ${k8sbackups_bucketName}
+      healthCheck: *productionNodeHealth
+      start: ./dist/zerops-k8s
+
+  - setup: edge-production
+    build:
+      base: go@1.22
+      buildCommands:
+        - mkdir -p dist
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
+      deployFiles:
+        - .
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 18082
+          path: /healthz
+    run:
+      base: go@1.22
+      ports:
+        - port: 8080
+          httpSupport: true
+          protocol: tcp
+        - port: 6443
+          httpSupport: false
+          protocol: tcp
+        - port: 18082
+          httpSupport: false
+          protocol: tcp
+      envVariables:
+        K8S_MODE: edge
+        K8S_EDGE_API_BACKENDS: k8scp1:6443
+        K8S_EDGE_INGRESS_BACKENDS: k8sworker1:32080,k8sworker2:32080
+        K8S_EDGE_HEADLAMP_ENABLED: "false"
+      healthCheck:
+        httpGet:
+          port: 18082
+          path: /healthz
+      start: ./dist/zerops-k8s
+
+  # Staging builds the pinned Docker image independently in each runtime. It
+  # verifies both the resulting immutable image ID and kubeadm version before
+  # starting the node agent; no S3 variables or services are referenced.
+  - setup: controlplane1-staging
+    build: &stagingNodeBuild
+      base: go@1.22
+      buildCommands:
+        - mkdir -p dist
+        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
+      deployFiles:
+        - .
+    deploy: &stagingNodeDeploy
+      temporaryShutdown: true
+      readinessCheck:
+        httpGet:
+          port: 18080
+          path: /healthz
+    run:
+      base: docker@26.1.5
+      ports: &stagingControlPlanePorts
+        - port: 18080
+          httpSupport: false
+          protocol: tcp
+        - port: 6443
+          httpSupport: false
+          protocol: tcp
+      initCommands: &stagingNodeInit
+        - |
+          set -eu
+          # versions.env and the Dockerfile are part of the deployed source.
+          # shellcheck disable=SC1091
+          . ./versions.env
+          test "v${KUBERNETES_VERSION}" = "$K8S_VERSION"
+          if ! docker image inspect "$K8S_NODE_IMAGE" >/dev/null 2>&1; then
+            docker build --pull \
+              --build-arg "KUBERNETES_VERSION=${KUBERNETES_VERSION}" \
+              --build-arg "KUBERNETES_MINOR=${KUBERNETES_VERSION%.*}" \
+              --build-arg "KUBERNETES_PACKAGE_VERSION=${KUBERNETES_PACKAGE_VERSION}" \
+              --tag "$K8S_NODE_IMAGE" \
+              --file node/Dockerfile .
+          fi
+          image_id=$(docker image inspect --format '{{.Id}}' "$K8S_NODE_IMAGE")
+          test -n "$image_id"
+          image_version=$(docker run --rm --entrypoint kubeadm "$K8S_NODE_IMAGE" version -o short)
+          test "$image_version" = "$K8S_VERSION"
+          sudo mkdir -p /var/lib/zerops-k8s
+          printf '%s\n' "$image_id" | sudo tee /var/lib/zerops-k8s/node-image-id >/dev/null
+        - sudo chown -R zerops:zerops /var/lib/zerops-k8s
+        - sudo mount --make-rshared /
+      envVariables:
+        K8S_MODE: node
+        K8S_NODE_ROLE: control-plane
+        K8S_NODE_NAME: k8scp1
+      healthCheck: &stagingNodeHealth
+        httpGet:
+          port: 18080
+          path: /healthz
+      start: ./dist/zerops-k8s
+
+  - setup: worker1-staging
+    build: *stagingNodeBuild
+    deploy: *stagingNodeDeploy
+    run:
+      base: docker@26.1.5
+      ports:
+        - port: 18080
+          httpSupport: false
+          protocol: tcp
+        - port: 32080
+          httpSupport: true
+          protocol: tcp
+      initCommands: *stagingNodeInit
+      envVariables:
+        K8S_MODE: node
+        K8S_NODE_ROLE: worker
+        K8S_NODE_NAME: k8sworker1
+        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
+        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
+      healthCheck: *stagingNodeHealth
+      start: ./dist/zerops-k8s
+
   # These two setups customize Zerops' first-class Prometheus/Grafana recipe.
   # They stay outside Kubernetes; the cluster only ships telemetry to them.
   - setup: prometheus

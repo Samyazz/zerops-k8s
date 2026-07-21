@@ -4,9 +4,45 @@ set -Eeuo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 readonly ROOT_DIR
-readonly CONTROL_PLANES=(k8scp1 k8scp2 k8scp3)
-readonly WORKERS=(k8sworker1 k8sworker2 k8sworker3)
+
+# The selected profile descriptor is the topology/capability source of truth.
+# Keep `full` as the default so existing callers remain backward compatible.
+K8S_PROFILE=${K8S_PROFILE:-full}
+case "$K8S_PROFILE" in
+  full|production|staging) ;;
+  *) printf '[zerops-k8s] ERROR: unknown K8S_PROFILE: %s\n' "$K8S_PROFILE" >&2; exit 1 ;;
+esac
+readonly K8S_PROFILE
+PROFILE_FILE="$ROOT_DIR/profiles/$K8S_PROFILE.json"
+readonly PROFILE_FILE
+[[ -f "$PROFILE_FILE" ]] \
+  || { printf '[zerops-k8s] ERROR: profile descriptor is missing: %s\n' "$PROFILE_FILE" >&2; exit 1; }
+
+profile_json() {
+  local filter=${1:?profile_json requires a jq filter}
+  jq -r "($filter) | if . == null then error(\"profile value is null\") else . end" \
+    "$PROFILE_FILE"
+}
+
+profile_capability() {
+  local capability=${1:?profile_capability requires a capability name}
+  [[ "$capability" =~ ^[A-Za-z][A-Za-z0-9]*$ ]] || return 1
+  jq -e --arg capability "$capability" \
+    '.capabilities[$capability] == true' "$PROFILE_FILE" >/dev/null
+}
+
+mapfile -t CONTROL_PLANES < <(profile_json '.topology.controlPlanes[]')
+mapfile -t WORKERS < <(profile_json '.topology.workers[]')
+readonly CONTROL_PLANES WORKERS
 readonly NODES=("${CONTROL_PLANES[@]}" "${WORKERS[@]}")
+CONTROL_PLANE_ENDPOINT=$(profile_json '.topology.controlPlaneEndpoint')
+EDGE_ENABLED=$(profile_json '.topology.edge.enabled')
+EDGE_HOSTNAME=$(jq -r '.topology.edge.hostname // ""' "$PROFILE_FILE")
+BACKUP_ENABLED=$(profile_json '.topology.backup.enabled')
+BACKUP_HOSTNAME=$(jq -r '.topology.backup.hostname // ""' "$PROFILE_FILE")
+NODE_IMAGE_MODE=$(profile_json '.nodeImage.mode')
+readonly CONTROL_PLANE_ENDPOINT EDGE_ENABLED EDGE_HOSTNAME
+readonly BACKUP_ENABLED BACKUP_HOSTNAME NODE_IMAGE_MODE
 
 log() { printf '[zerops-k8s] %s\n' "$*"; }
 die() { printf '[zerops-k8s] ERROR: %s\n' "$*" >&2; exit 1; }

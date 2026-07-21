@@ -25,6 +25,9 @@ run_full_conformance=${RUN_FULL_CONFORMANCE:-true}
   || die "confirmation must exactly match the reviewed repository target $target"
 [[ "$package_version" == "${target_version}-"* ]] \
   || die 'KUBERNETES_PACKAGE_VERSION does not match KUBERNETES_VERSION'
+if [[ "$NODE_IMAGE_MODE" == local && "$plan_only" != true ]]; then
+  die "applied version upgrades are not supported by Kubernetes profile '$K8S_PROFILE'; run the reviewed plan-only path"
+fi
 
 load_zerops_env
 require_env K8S_AGENT_TOKEN K8S_RECOVERY_AGE_RECIPIENT
@@ -66,20 +69,21 @@ finish() {
 trap finish EXIT INT TERM
 
 expected_workers=$(cluster_tag_value workers)
-expected_workers=${expected_workers:-3}
-workers=(k8sworker1 k8sworker2 k8sworker3)
-if [[ "$expected_workers" == 4 ]]; then workers+=(k8sworker4); fi
-upgrade_order=(k8scp1 k8scp2 k8scp3 "${workers[@]}")
+expected_workers=${expected_workers:-${#WORKERS[@]}}
+workers=("${WORKERS[@]}")
+mapfile -t optional_workers < <(profile_json '.topology.optionalWorkers[]?')
+if (( expected_workers > ${#WORKERS[@]} )); then workers+=("${optional_workers[@]}"); fi
+upgrade_order=("${CONTROL_PLANES[@]}" "${workers[@]}")
 
 versions_json=$(kubectl get nodes -o json | jq \
   '[.items[] | {name:.metadata.name,version:.status.nodeInfo.kubeletVersion}] | sort_by(.name)')
-python3 - "$target" "$expected_workers" "$versions_json" <<'PY'
+python3 - "$target" "$expected_workers" "${#CONTROL_PLANES[@]}" "$versions_json" <<'PY'
 import json
 import re
 import sys
 
-target_text, expected_workers = sys.argv[1], int(sys.argv[2])
-nodes = json.loads(sys.argv[3])
+target_text, expected_workers, expected_control_planes = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+nodes = json.loads(sys.argv[4])
 pattern = re.compile(r'^v(\d+)\.(\d+)\.(\d+)$')
 
 def parse(value):
@@ -89,7 +93,7 @@ def parse(value):
     return tuple(map(int, match.groups()))
 
 target = parse(target_text)
-if len(nodes) != expected_workers + 3:
+if len(nodes) != expected_workers + expected_control_planes:
     raise SystemExit('live node count does not match the Zerops-side worker contract')
 for node in nodes:
     current = parse(node['version'])
@@ -115,8 +119,10 @@ endpoint_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
 backup_taken=false
 if [[ "$endpoint_status" == 404 ]]; then
   log 'deploying the reviewed fixed-operation upgrade endpoint to every node agent'
-  "$ROOT_DIR/scripts/backup-cluster.sh"
-  backup_taken=true
+  if profile_capability backup; then
+    "$ROOT_DIR/scripts/backup-cluster.sh"
+    backup_taken=true
+  fi
   PUSH_AGENT_CODE=true "$ROOT_DIR/scripts/redeploy-node-agents.sh"
 elif [[ "$endpoint_status" != 200 ]]; then
   die "k8scp1 upgrade preflight endpoint returned HTTP $endpoint_status"
@@ -141,14 +147,18 @@ if (( remaining == 0 )); then
   exit 0
 fi
 
-if [[ "$backup_taken" != true ]]; then
+if profile_capability backup && [[ "$backup_taken" != true ]]; then
   log 'taking the mandatory verified recovery point before the version plan'
   "$ROOT_DIR/scripts/backup-cluster.sh"
 fi
-log 'proving that the fresh recovery point is restorable before changing Kubernetes'
-"$ROOT_DIR/scripts/restore-drill.sh"
-log 'building and uploading the exact replacement node image before changing Kubernetes'
-"$ROOT_DIR/scripts/build-node-image.sh"
+if profile_capability restore; then
+  log 'proving that the fresh recovery point is restorable before changing Kubernetes'
+  "$ROOT_DIR/scripts/restore-drill.sh"
+fi
+if [[ "$NODE_IMAGE_MODE" == object-storage ]]; then
+  log 'building and uploading the exact replacement node image before changing Kubernetes'
+  "$ROOT_DIR/scripts/build-node-image.sh"
+fi
 
 agent_request k8scp1 POST /v1/cluster/upgrade "$(payload plan)" \
   | jq '{status,currentVersion,targetVersion}' >"$evidence_dir/kubeadm-plan.json"

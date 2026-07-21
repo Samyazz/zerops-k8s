@@ -3,6 +3,11 @@ name: Reusable Zerops Kubernetes deployment
 on:
   workflow_call:
     inputs:
+      profile:
+        description: Cluster profile to reconcile
+        required: false
+        default: full
+        type: string
       run_full_conformance:
         description: Run the full CNCF certified-conformance suite
         required: false
@@ -28,6 +33,7 @@ jobs:
       ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_CLIENT_ID: ${{ vars.ZEROPS_CLIENT_ID }}
+      K8S_PROFILE: ${{ inputs.profile }}
       RUN_FULL_CONFORMANCE: ${{ inputs.run_full_conformance }}
       K8S_RECOVERY_AGE_RECIPIENT: ${{ vars.K8S_RECOVERY_AGE_RECIPIENT }}
     steps:
@@ -44,6 +50,12 @@ jobs:
             exit 1
           }
 
+      - name: Validate selected profile before mutation
+        shell: bash
+        run: |
+          source ./scripts/lib.sh
+          printf 'Selected profile: %s\n' "$K8S_PROFILE"
+
       - name: Install pinned deployment tools
         shell: bash
         run: ./scripts/install-tools.sh
@@ -56,11 +68,21 @@ jobs:
         shell: bash
         run: ./scripts/deploy.sh
 
+      - name: Record sanitized resolved profile contract
+        if: always()
+        shell: bash
+        run: |
+          source ./scripts/lib.sh
+          mkdir -p "$RUNNER_TEMP/evidence"
+          jq --arg profile "$K8S_PROFILE" \
+            '{profile: $profile, resolvedContract: .}' "$PROFILE_FILE" \
+            >"$RUNNER_TEMP/evidence/profile-contract.json"
+
       - name: Upload sanitized acceptance evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: zerops-k8s-evidence-${{ github.run_id }}
+          name: zerops-k8s-${{ inputs.profile }}-evidence-${{ github.run_id }}
           path: ${{ runner.temp }}/evidence
           if-no-files-found: warn
           retention-days: 1
@@ -73,6 +95,7 @@ jobs:
     env:
       ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      K8S_PROFILE: ${{ inputs.profile }}
     steps:
       - name: Check out the exact requested revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5

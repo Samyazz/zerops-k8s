@@ -7,7 +7,7 @@ source "$ROOT_DIR/versions.env"
 
 if command -v apt-get >/dev/null 2>&1; then
   sudo apt-get update
-  sudo apt-get install -y --no-install-recommends ca-certificates curl jq shellcheck wireguard-tools
+  sudo apt-get install -y --no-install-recommends ca-certificates curl jq python3-yaml shellcheck wireguard-tools
 elif command -v apk >/dev/null 2>&1; then
   missing=()
   command -v bash >/dev/null 2>&1 || missing+=(bash)

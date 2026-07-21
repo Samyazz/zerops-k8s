@@ -24,31 +24,42 @@ trap cleanup EXIT INT TERM
 
 api_request_file GET "/project/${ZEROPS_PROJECT_ID}/service-stack?limit=100" '' "$response"
 
-cp_cpu=$(cluster_tag_value cp-cpu); cp_cpu=${cp_cpu:-4}
-cp_ram=$(cluster_tag_value cp-ram); cp_ram=${cp_ram:-8}
-cp_disk=$(cluster_tag_value cp-disk); cp_disk=${cp_disk:-20}
-worker_cpu=$(cluster_tag_value worker-cpu); worker_cpu=${worker_cpu:-4}
-worker_ram=$(cluster_tag_value worker-ram); worker_ram=${worker_ram:-12}
-worker_disk=$(cluster_tag_value worker-disk); worker_disk=${worker_disk:-50}
+cp_mode=$(jq -er --arg node "${CONTROL_PLANES[0]}" '.services[] | select(.hostname == $node) | .resources.cpuMode' "$PROFILE_FILE")
+cp_default_cpu=$(jq -er --arg node "${CONTROL_PLANES[0]}" '.services[] | select(.hostname == $node) | .resources.cpu' "$PROFILE_FILE")
+cp_default_ram=$(jq -er --arg node "${CONTROL_PLANES[0]}" '.services[] | select(.hostname == $node) | .resources.ramGb' "$PROFILE_FILE")
+cp_default_disk=$(jq -er --arg node "${CONTROL_PLANES[0]}" '.services[] | select(.hostname == $node) | .resources.diskGb' "$PROFILE_FILE")
+worker_mode=$(jq -er --arg node "${WORKERS[0]}" '.services[] | select(.hostname == $node) | .resources.cpuMode' "$PROFILE_FILE")
+worker_default_cpu=$(jq -er --arg node "${WORKERS[0]}" '.services[] | select(.hostname == $node) | .resources.cpu' "$PROFILE_FILE")
+worker_default_ram=$(jq -er --arg node "${WORKERS[0]}" '.services[] | select(.hostname == $node) | .resources.ramGb' "$PROFILE_FILE")
+worker_default_disk=$(jq -er --arg node "${WORKERS[0]}" '.services[] | select(.hostname == $node) | .resources.diskGb' "$PROFILE_FILE")
+cp_cpu=$(cluster_tag_value cp-cpu); cp_cpu=${cp_cpu:-$cp_default_cpu}
+cp_ram=$(cluster_tag_value cp-ram); cp_ram=${cp_ram:-$cp_default_ram}
+cp_disk=$(cluster_tag_value cp-disk); cp_disk=${cp_disk:-$cp_default_disk}
+worker_cpu=$(cluster_tag_value worker-cpu); worker_cpu=${worker_cpu:-$worker_default_cpu}
+worker_ram=$(cluster_tag_value worker-ram); worker_ram=${worker_ram:-$worker_default_ram}
+worker_disk=$(cluster_tag_value worker-disk); worker_disk=${worker_disk:-$worker_default_disk}
 
 node_contract=$(mktemp)
-printf '%s %s %s %s\n' \
-  k8sworker1 "$worker_cpu" "$worker_ram" "$worker_disk" \
-  k8sworker2 "$worker_cpu" "$worker_ram" "$worker_disk" \
-  k8sworker3 "$worker_cpu" "$worker_ram" "$worker_disk" \
-  k8scp2 "$cp_cpu" "$cp_ram" "$cp_disk" \
-  k8scp3 "$cp_cpu" "$cp_ram" "$cp_disk" \
-  k8scp1 "$cp_cpu" "$cp_ram" "$cp_disk" >"$node_contract"
-if jq -e '.list | any(.name == "k8sworker4")' "$response" >/dev/null; then
-  sed -i "1i k8sworker4 $worker_cpu $worker_ram $worker_disk" "$node_contract"
-fi
+for node in "${WORKERS[@]}"; do
+  printf '%s %s %s %s %s\n' "$node" "$worker_mode" "$worker_cpu" "$worker_ram" "$worker_disk" >>"$node_contract"
+done
+mapfile -t optional_workers < <(profile_json '.topology.optionalWorkers[]?')
+for node in "${optional_workers[@]}"; do
+  if jq -e --arg name "$node" '.list | any(.name == $name)' "$response" >/dev/null; then
+    printf '%s %s %s %s %s\n' "$node" "$worker_mode" "$worker_cpu" "$worker_ram" "$worker_disk" >>"$node_contract"
+  fi
+done
+for ((index=${#CONTROL_PLANES[@]}-1; index>=0; index--)); do
+  printf '%s %s %s %s %s\n' "${CONTROL_PLANES[index]}" "$cp_mode" "$cp_cpu" "$cp_ram" "$cp_disk" >>"$node_contract"
+done
 
-while read -r hostname cpu ram disk; do
+while read -r hostname cpu_mode cpu ram disk; do
   service_id=$(jq -er --arg hostname "$hostname" '.list[] | select(.name == $hostname) | .id' "$response") \
     || die "required Zerops node service is missing: $hostname"
 
   if jq -e \
     --arg hostname "$hostname" \
+    --arg cpu_mode "$cpu_mode" \
     --argjson cpu "$cpu" \
     --argjson ram "$ram" \
     --argjson disk "$disk" '
@@ -56,7 +67,7 @@ while read -r hostname cpu ram disk; do
       | select(.name == $hostname)
       | (.currentAutoscaling.verticalAutoscaling // .customAutoscaling.verticalAutoscaling) as $v
       | (.currentAutoscaling.horizontalAutoscaling // .customAutoscaling.horizontalAutoscaling) as $h
-      | $v.cpuMode == "DEDICATED"
+      | $v.cpuMode == $cpu_mode
         and $v.minResource.cpuCoreCount == $cpu
         and $v.maxResource.cpuCoreCount == $cpu
         and $v.startCpuCoreCount == $cpu
@@ -74,10 +85,11 @@ while read -r hostname cpu ram disk; do
   jq -cn \
     --argjson cpu "$cpu" \
     --argjson ram "$ram" \
-    --argjson disk "$disk" '{
+    --argjson disk "$disk" \
+    --arg cpu_mode "$cpu_mode" '{
       customAutoscaling: {
         verticalAutoscaling: {
-          cpuMode: "DEDICATED",
+          cpuMode: $cpu_mode,
           minResource: {
             cpuCoreCount: $cpu,
             memoryGBytes: $ram,

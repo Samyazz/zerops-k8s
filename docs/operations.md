@@ -1,71 +1,97 @@
 # Operations
 
+## Select the live profile
+
+Every manual workflow has a `profile` input and defaults to `full`. Select the profile that is actually live. Scheduled backup and maintenance runs use repository variable `K8S_PROFILE`, falling back to `full`; update that variable after an intentional profile switch.
+
+All changing workflows share one GitHub concurrency group and verify the Zerops repository/profile lock. Unknown profiles, a profile different from the live ownership tag, an unresolved `cleanup-failed`/`upgrade-failed` lock, and unsupported capabilities fail before infrastructure mutation.
+
+| Operation | `full` | `production` | `staging` |
+|---|---|---|---|
+| Deploy/reconcile and destroy | Yes | Yes | Yes |
+| Routine roll | Backup, workers, 3 control planes, add-ons | Backup, workers, sole control plane, add-ons | Restart/recover worker and sole control plane; no backup/storage step |
+| Kubernetes upgrade | Yes | Yes; expected API interruption | Yes; expected outages and no backup step |
+| Vertical resize | Yes | Yes | Yes |
+| Horizontal resize | 3–4 workers | 2–3 workers | No; count remains 1 |
+| Backup and restore drill | Yes | Yes | No |
+
+Unsupported staging backup, restore, storage-health, horizontal-resize, and HA-disruption paths exit with a profile capability message before a Zerops login or mutation.
+
 ## Daily checks
 
-Use Grafana's **Zerops Kubernetes** folder for cluster, node, workload, etcd, Calico, Istio, ingress, certificate, and deployment views. Use Kibana for container, journal, audit, and control-plane logs. Retention is four hours by design.
-
-With the Zerops VPN connected:
+Connect the Zerops VPN and use the selected profile's kubeconfig:
 
 ```sh
 export KUBECONFIG="$HOME/.kube/zerops-k8s"
+kubectl get --raw=/readyz
 kubectl get nodes
 kubectl get pods -A
 kubectl get gateways,httproutes -A
-kubectl get volumes.longhorn.io -A
-istioctl proxy-status
 ```
 
-Decode the kubeconfig stored in Zerops:
+For `full` and `production`, also inspect Longhorn:
 
 ```sh
-printf '%s' "$K8S_ADMIN_KUBECONFIG_B64" | base64 -d > "$HOME/.kube/zerops-k8s"
-chmod 0600 "$HOME/.kube/zerops-k8s"
+kubectl -n longhorn-system get nodes.longhorn.io,volumes.longhorn.io
 ```
 
-Headlamp roles are intentionally separate: admin, operator, developer (the `workloads` namespace), and read-only. Paste the corresponding service-account token into Headlamp's login screen.
+For `full`, use Grafana's **Zerops Kubernetes** dashboards and Kibana for cluster telemetry; `istioctl proxy-status` verifies the ambient mesh. For `production` and `staging`, inspect normal logs, CPU, RAM and health on each outer runtime's Zerops service detail. Those compact profiles intentionally do not offer nested pod-level Grafana/Kibana telemetry.
 
-## Deploy and reconcile
+Decode a kubeconfig value retrieved from the current run's sensitive Zerops project variable without printing it:
 
-Run **Deploy Zerops Kubernetes** manually. A successful run is an update-in-place and remains running. GitHub concurrency rejects parallel runs, while the Zerops-side state blocks deployment after failed cleanup.
+```sh
+umask 077
+printf '%s' "$K8S_ADMIN_KUBECONFIG_B64" | base64 -d >"$HOME/.kube/zerops-k8s"
+```
 
-Run **Destroy Zerops Kubernetes** to reset every nested node. It removes the cluster state but leaves the reusable Zerops services and first-class observability services in the current project.
+The server in that kubeconfig is `https://k8sedge.zerops:6443` for `full`/`production` and `https://k8scp1.zerops:6443` for `staging`.
+
+## Deploy, reconcile and switch
+
+Run **Deploy Zerops Kubernetes** manually. A same-profile run updates in place and leaves a passing cluster running. A profile change is destructive:
+
+1. Acquire the GitHub and Zerops locks and record source/target profiles.
+2. If the source supports backup, require a fresh verified recovery point.
+3. Destroy the nested cluster and cleanly retire Kubernetes/etcd/Longhorn membership.
+4. Remove only repository-owned services forbidden by the target profile.
+5. Reconcile the target services, deploy, and run target acceptance.
+
+Never downsize three-member etcd to one member in place. Staging is disposable; its data is not automatically promoted to another profile. An application-data restore requires a separate, explicitly compatible recovery decision.
+
+Run **Destroy Zerops Kubernetes** with the live profile to reset its nested state and perform repository-owned cleanup. It must preserve Zerops project-core services, `zcp`, and unrelated user services.
 
 ## Rolling maintenance
 
-Run **Roll Zerops Kubernetes nodes and add-ons** for a routine node-agent and pinned add-on reconciliation. It also runs every Monday at 03:17 UTC. The workflow:
+Run **Roll Zerops Kubernetes nodes and add-ons** on demand. It also runs Monday at 03:17 UTC using `K8S_PROFILE`.
 
-1. Rejects a repository mismatch or unresolved cleanup lock.
-2. Creates and verifies fresh etcd and Longhorn backups.
-3. Checks that every kubelet still matches `versions.env`.
-4. Drains and rolls workers one at a time, followed by `k8scp2`, `k8scp3`, and `k8scp1`.
-5. Waits for node readiness and healthy Longhorn replicas between disruptions.
-6. Reconciles the pinned add-ons and runs non-destructive acceptance checks.
+- `full`: verified etcd/Longhorn backup, workers one at a time, `k8scp2`, `k8scp3`, then `k8scp1`, with Longhorn and API gates.
+- `production`: verified etcd/Longhorn backup, two workers one at a time, then `k8scp1`. The API is expected to be unavailable while the sole control plane restarts.
+- `staging`: recover/restart the worker and control plane separately. Outage is expected; no backup, storage-health, worker-disruption, or HA claim is made.
 
-This workflow rolls the current pinned release; it is not an unreviewed Kubernetes version-upgrade switch. See the upgrade guide before changing version pins.
+The workflow reconciles the current pinned release. It does not silently select a newer Kubernetes version.
 
 ## Resize
 
-Run **Resize Zerops Kubernetes** and provide the desired fixed resources. Control planes accept 4–32 dedicated CPUs, 8–128 GB RAM, and 20–500 GB disk. Workers accept 4–32 dedicated CPUs, 12–128 GB RAM, and 50–1000 GB disk. The desired worker count is either three or four.
+Run **Resize Zerops Kubernetes** with the live profile and fixed resource values. CPU and RAM can increase or decrease within the profile contract. A disk can grow but cannot shrink; a requested disk below the current allocation fails before that node changes.
 
-The workflow takes verified backups first, then cordons, drains, resizes, restarts, verifies, and uncordons one node at a time. CPU and RAM can move up or down. Zerops Docker VM disks can only grow, so any disk value below the current allocation is rejected before that node is changed.
+The `desired_workers` input must be 3 or 4 for `full`, 2 or 3 for `production`, and exactly 1 for `staging`. Staging vertical resize therefore uses `desired_workers=1`; any other count is rejected before mutation.
 
-Scaling to four builds and tests the exact committed node-agent artifact before changing infrastructure, creates `k8sworker4` without a placeholder deployment, activates the verified artifact through the direct app-version API, joins and labels the node, and waits for Calico, Istio, Longhorn, and the required host modules. A failed or canceled partial scale-up deletes the unfinished Zerops service. Scaling to three disables Longhorn scheduling on worker four, waits for all replicas to evacuate, drains and resets it, and only then removes its Kubernetes and Zerops records. Three workers remain the HA and Longhorn-replica floor.
+Scale-in drains the retiring worker and evacuates Longhorn replicas before removing its Kubernetes and Zerops records. `full` never drops below three workers, and `production` never drops below two. Staging has no horizontal path.
 
 ## Backups
 
-- Prometheus snapshots run hourly and keep four object-storage copies.
-- **Back up Zerops Kubernetes** runs at minute 23 every six hours and can also be started manually by the repository owner.
-- Each run creates a consistent stacked-etcd snapshot on `k8scp1`, checks it with `etcdutl`, uploads it beneath `etcd/YYYY/MM/DD/`, downloads it again, and only then uploads the snapshot's verified-success commit marker after the encrypted bundle metadata exists. A failed/cancelled run removes only its own uncommitted objects.
-- The matching `control-plane/YYYY/MM/DD/` object is an age/X25519-encrypted archive containing Kubernetes PKI, service-account signing keys, static manifests, kubeconfigs, the API encryption configuration, and an exact node/etcd version manifest. The Action round-trip verifies the encrypted object without exposing its plaintext or private identity.
-- The same run configures Longhorn's target beneath `longhorn/`, creates a `SystemBackup` with `volumeBackupPolicy: always`, and requires both `Ready` system-backup state and a completed backup of a real proof PVC. S3 credentials are created at runtime from Zerops object-storage variables and are never stored in Git.
-- Longhorn recurring volume backups run at minute 17 every six hours and recurring system backups at minute 47. Each recurring job and the Action-created `zerops-*` SystemBackups retain eight records.
-- Etcd and encrypted identity objects use fail-closed tiered retention: the newest 28 verified sets, the newest set from seven UTC days, four ISO weeks, and three calendar months are retained as a union. A snapshot without its adjacent verified metadata is never deleted automatically. Settings are project variables and can be tightened or extended for a published import.
-- The recipe provisions a private 25 GB `k8sbackups` bucket. At backup start, an older smaller bucket is increased in place to `K8S_BACKUP_QUOTA_GB` through the Zerops API without replacement or data loss. Every backup then sums the entire bucket inventory after pruning, emits a GitHub warning at 70%, and fails closed at 95%. Raise the configured quota or adjust retention before retrying; the workflow never deletes node images, Longhorn-native objects, incomplete snapshots, or unrecognised keys.
-- The four-hour setting applies only to demonstration metrics and logs, not to cluster backups.
+Backups exist only for `full` and `production`.
 
-Longhorn's three replicas provide node-failure availability, while the S3 target provides the separate off-node backup copy. Databases and other stateful applications may still need application-consistent logical backups in addition to crash-consistent volume backups.
+- **Back up Zerops Kubernetes** runs every six hours using repository variable `K8S_PROFILE` or on demand with an explicit profile.
+- Each run creates a consistent stacked-etcd snapshot on `k8scp1`, verifies it with `etcdutl`, and pairs it with an age-encrypted identity bundle containing the compatible PKI, signing keys, static manifests, kubeconfigs, encryption configuration, and version manifest.
+- The workflow configures Longhorn's private S3 target, creates a system backup and proof-volume backup, and verifies S3 round trips before writing completion metadata.
+- `full` uses three Longhorn replicas; `production` uses two. Both store their off-node copies in `k8sbackups`.
+- Retention and quota checks are fail-closed. Unrecognized or incomplete objects are never deleted automatically.
+- A one-day artifact contains only profile, resolved non-secret contract, object keys, sizes/checksums, statuses, capacity decisions, and test summaries.
 
-Useful status checks:
+`staging` has no object storage, Longhorn, backup credentials, backup job, or restore job. Use Git and redeployment to recreate it.
+
+Useful backup status checks for supported profiles:
 
 ```sh
 kubectl -n longhorn-system get backuptargets,systembackups,backups
@@ -73,20 +99,16 @@ kubectl -n longhorn-system get recurringjobs
 kubectl -n zerops-backup-validation get pvc,pod
 ```
 
-Each Action retains a sanitized one-day artifact with the etcd and encrypted-bundle object keys, byte counts and SHA-256 values, snapshot revision/key count, retention/capacity decisions, Longhorn target status, system-backup status, completed volume-backup status, and S3 object-count proof. It contains no object-store credential, age identity, Kubernetes private key, or decrypted bundle.
-
 ## Recovery drills
 
-**Drill Zerops Kubernetes recovery** runs on the first day of each month at 04:13 UTC and can be dispatched by the repository owner. It first creates a fresh recovery point, then:
+**Drill Zerops Kubernetes recovery** runs monthly for the configured non-staging profile and can be dispatched by the repository owner. It creates a fresh recovery point, checksum-verifies and decrypts the identity bundle without exposing plaintext, starts an isolated restored etcd member, queries Kubernetes registry keys, restores the proof Longhorn volume under a distinct name, compares its content checksum, and removes all drill resources.
 
-1. Downloads and checksum-verifies the etcd snapshot and encrypted control-plane bundle.
-2. Decrypts the bundle with the GitHub recovery identity and requires the CA, etcd CA, service-account signing key, static etcd manifest, encryption configuration, and version manifest.
-3. Uses the recorded official etcd image to restore into a disposable local data directory, starts an isolated member, requires endpoint health, and verifies Kubernetes registry/default-namespace keys.
-4. Restores the newest completed backup of the real Longhorn proof PVC into a distinct Longhorn volume/PV/PVC, mounts it read-only, and compares its payload SHA-256 to the live source.
-5. Removes all disposable etcd and Longhorn drill resources. Only sanitized evidence is uploaded.
+This proves backup readability without overwriting the live API server. It is rejected for `staging` before mutation. A destructive whole-cluster rehearsal requires an explicitly approved temporary project because this repository otherwise enforces one managed cluster.
 
-This proves backup readability and data restoration without stopping or overwriting the live API server. A destructive whole-cluster rehearsal still requires an explicitly approved temporary recovery project because the repository's one-cluster invariant forbids a second live cluster by default.
+## Evidence
+
+Workflow artifacts are retained for one day. The deploy artifact includes the selected profile, resolved descriptor, exact Zerops inventory, Kubernetes nodes/pods and Gateway status, functional/security results, forbidden-component assertions, and backup/restore results only when the capability exists. Sanitization must remove tokens, authorization headers, cookies, e-mail addresses, and IP addresses. Raw kubeconfigs, Kubernetes Secrets, private keys, object-storage credentials, unredacted API responses, and support bundles are never uploaded.
 
 ## Break-glass access
 
-SSH remains available through the Zerops VPN. Normal operations should use Kubernetes and the authenticated node agent. SSH to a node service is for recovery when the API and automation paths both fail.
+SSH remains available through the Zerops VPN. Normal operations use Kubernetes and the fixed-operation node agent. SSH to an outer node is reserved for recovery when both the Kubernetes API and normal automation are unavailable.

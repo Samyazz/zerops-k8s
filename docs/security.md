@@ -1,14 +1,33 @@
 # Security model
 
-- Node lifecycle endpoints are private, bearer-authenticated, and expose fixed operations rather than a generic shell.
-- The node image archive is private and verified with SHA-256 before loading.
-- Kubernetes Secrets use API-server envelope encryption with a Zerops-generated 32-byte key.
-- Control-plane CA/private keys, service-account signing keys, static manifests, and the encryption configuration are backed up only inside an age/X25519-encrypted recovery object. The private age identity is a GitHub secret with a separate offline copy; neither it nor decrypted material enters artifacts or Git.
-- Audit policy records mutations and metadata access; Fluent Bit redacts credentials, cookies, e-mail addresses, usernames, and IP addresses before forwarding.
-- The `workloads` namespace enforces the Restricted Pod Security Standard. System namespaces explicitly opt into the minimum required privileged policy for CNI, mesh CNI, storage, node metrics, and log collection.
-- Istio ambient enforces strict mTLS for meshed workloads.
-- Headlamp is raw TCP behind `k8sedge:18081`, has no public Zerops HTTP route, and uses role-specific long-lived service-account tokens.
-- Repository files contain no secret values. Workflow credentials are GitHub secrets; generated operational credentials are sensitive Zerops project variables keyed by the successful GitHub run ID.
-- Kubescape and CIS findings are reports. They do not automatically block this demonstration, while conformance and functional failures do.
+## Shared baseline
 
-The cluster deliberately permits privileged system components needed by Calico, Istio CNI/ztunnel, Longhorn, node-exporter, Alloy, and Fluent Bit. User workloads do not receive those exemptions.
+- Node lifecycle endpoints are private, bearer-authenticated, and expose fixed operations rather than a generic shell.
+- Kubernetes API access is VPN-only. The recipe does not publicly route the API, Headlamp, or application ingress.
+- Kubernetes Secrets use API-server encryption at rest with a 32-byte key generated and stored through Zerops secrets.
+- The `workloads` namespace enforces the Restricted Pod Security Standard, least-privilege RBAC, default-deny NetworkPolicies, bounded resources, a `LimitRange`, and a `ResourceQuota`.
+- System components receive only documented PSA/privileged exceptions required by Calico, ingress, and profile-enabled storage/telemetry.
+- The API audit policy records mutations and metadata access. Logs and artifacts redact tokens, authorization headers, cookies, e-mail addresses, and IP addresses.
+- Kubescape/CIS findings are reports; they do not automatically block deployment. Functional and profile-appropriate conformance failures do.
+- Git stores no token, kubeconfig, password, private key, rendered Kubernetes Secret, or unredacted API response. GitHub secrets authenticate workflows; generated operator credentials stay in sensitive Zerops project variables.
+- GitHub deployment remains owner-triggered and manual. All changing workflows use repository-wide concurrency and the Zerops repository/profile lock. GitHub-owned Actions are pinned to full commit SHAs; third-party Actions are prohibited.
+
+## Profile-specific controls
+
+| Control | `full` | `production` | `staging` |
+|---|---|---|---|
+| Service mesh | Istio ambient with strict mTLS | None | None |
+| Durable recovery identity | Age-encrypted etcd/PKI/signing/encryption bundle in `k8sbackups` | Same, for its single-member etcd | None |
+| Cluster UI | VPN-only Headlamp with admin/operator/developer/read-only service accounts | None | None |
+| Dedicated telemetry | Alloy/Fluent Bit/exporters to Zerops observability services | None; outer runtime platform logs/stats only | None; outer runtime platform logs/stats only |
+| Privileged storage exception | Longhorn, 3-replica policy | Longhorn, 2-replica policy | None |
+
+The production and staging names do not alter their availability facts: both have one control plane, and staging also has one worker. Security acceptance reports expected outage boundaries instead of treating them as failover.
+
+## Secret and evidence handling
+
+The full and production recovery workflows create object-storage credentials only at runtime from Zerops environment references. Decrypted recovery bundles, private age identities, S3 credentials, API tokens, Headlamp tokens, and kubeconfigs never enter artifacts. One-day artifacts contain only the selected profile, its public descriptor, exact service/Kubernetes inventories, statuses, checksums, non-sensitive object keys, redacted functional output, and forbidden-component assertions.
+
+Staging must start without `k8sbackups_*` variables. Its node image is built locally so adding a backup credential solely for image distribution cannot accidentally create an undeclared durable dependency.
+
+SSH through the Zerops VPN is retained as break-glass access. Normal changes use Kubernetes and the authenticated fixed-operation node agent.

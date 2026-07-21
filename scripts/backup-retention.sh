@@ -5,6 +5,9 @@ ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/lib.sh"
 
+profile_capability backup \
+  || die "backup retention is not supported by Kubernetes profile '$K8S_PROFILE'"
+
 phase=${1:-post-backup}
 [[ "$phase" =~ ^[a-z0-9-]+$ ]] || die 'retention phase contains unsupported characters'
 

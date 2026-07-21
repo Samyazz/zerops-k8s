@@ -5,6 +5,9 @@ ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/lib.sh"
 
+profile_capability restore \
+  || die "restore is not supported by Kubernetes profile '$K8S_PROFILE'"
+
 require_env ZEROPS_PROJECT_ID KUBECONFIG K8S_RECOVERY_AGE_IDENTITY
 require age
 require curl

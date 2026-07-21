@@ -25,7 +25,7 @@ service_id=$(jq -er '.serviceStackId' "$process") \
 api_request_file GET "/project/${ZEROPS_PROJECT_ID}/service-stack?limit=100" '' "$services"
 jq -e --arg id "$service_id" --argjson nodes "$(printf '%s\n' "${NODES[@]}" | jq -R . | jq -s .)" '
   .list[] | select(.id == $id and (.name as $name | $nodes | index($name)))
-' "$services" >/dev/null || die 'refusing to cancel a process outside the six Kubernetes node services'
+' "$services" >/dev/null || die "refusing to cancel a process outside the $K8S_PROFILE Kubernetes node services"
 
 status=$(jq -er '.status' "$process")
 case "$status" in

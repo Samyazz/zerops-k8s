@@ -21,8 +21,12 @@ if (( ${#unexpected_versions[@]} > 0 )); then
   exit 1
 fi
 
-log 'taking mandatory pre-update etcd and Longhorn backups'
-"$ROOT_DIR/scripts/backup-cluster.sh"
+if profile_capability backup; then
+  log 'taking mandatory pre-update etcd and Longhorn backups'
+  "$ROOT_DIR/scripts/backup-cluster.sh"
+else
+  log "profile $K8S_PROFILE has no durable backup capability; maintenance will exercise stop/start recovery only"
+fi
 set_cluster_state updating "${GITHUB_REPOSITORY:-Samyazz/zerops-k8s}" "${GITHUB_RUN_ID:-local}"
 
 log 'rolling the nested Kubernetes node restart one node at a time'

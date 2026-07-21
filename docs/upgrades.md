@@ -1,20 +1,28 @@
 # Upgrades
 
-Ubuntu security updates are applied automatically inside the nested nodes, excluding kubelet, kubeadm, kubectl, and containerd. **Roll Zerops Kubernetes nodes and add-ons** runs every Monday and can be triggered manually; it takes verified backups, rolls the existing pinned nodes one at a time, and reapplies the repository-managed cluster and observability configuration. Every clean deployment rebuilds the pinned node image so replacement nodes also include current security packages.
+Ubuntu security updates are applied automatically inside nested nodes, excluding kubelet, kubeadm, kubectl, and containerd. The weekly maintenance workflow rolls the current node image and pinned add-ons. Kubernetes minor versions remain controlled because kubeadm, etcd, Calico, the ingress implementation, and—where enabled—Istio and Longhorn must move as a reviewed compatibility set.
 
-Kubernetes and core add-ons are intentionally pinned in [`versions.env`](../versions.env). Automatic unreviewed Kubernetes minor upgrades are unsafe for stacked etcd, CNI, mesh, and storage, so **Upgrade Zerops Kubernetes version** is manual and fail-closed:
+## Profile behavior
 
-1. Update `KUBERNETES_VERSION` and `KUBERNETES_PACKAGE_VERSION` together, plus the matching `import.yaml` node-image variables. Do not skip a minor version or downgrade.
-2. Review Kubernetes, Calico, Istio, Longhorn, and Gateway API compatibility. Add the exact reviewed tuple to [`upgrade-policy.json`](../upgrade-policy.json); the workflow rejects an unlisted or mismatched tuple.
-3. Dispatch the workflow with `confirm_target` exactly equal to `v<KUBERNETES_VERSION>` and leave `plan_only` enabled. The workflow deploys the authenticated fixed-operation agent when needed, creates and restores a fresh recovery point, builds/uploads the exact replacement image, installs the target kubeadm only on the primary, and requires `kubeadm upgrade plan` to pass.
-4. Review the sanitized plan/recovery evidence. Dispatch the same commit and target with `plan_only` disabled.
-5. The workflow upgrades `k8scp1`, `k8scp2`, and `k8scp3` serially, then every worker serially. Each node is cordoned/drained, each kubelet is verified at the target before uncordon, API readiness and Longhorn health gate every transition, and a partial retry skips already-upgraded nodes.
+| Profile | Node order | Pre-upgrade recovery gate | Post-upgrade acceptance |
+|---|---|---|---|
+| `full` | `k8scp1`, `k8scp2`, `k8scp3` serially, then workers serially | Fresh etcd/identity and Longhorn backup plus isolated restore proof | Functional suite and full CNCF conformance by default |
+| `production` | Sole `k8scp1`, then workers serially | Fresh etcd/identity and Longhorn backup plus isolated restore proof | Functional suite and Sonobuoy quick by default |
+| `staging` | Sole `k8scp1`, then `k8sworker1` | No backup capability; require clean recreatability and a plan-only pass | Functional networking/DNS/ingress/security smoke suite |
 
-Before any node is cordoned, the workflow downloads the checksum-pinned Go toolchain, tests the exact requested Git commit, and builds the two static node-agent binaries. It then creates a disposable Docker service at the configured worker size, deploys that exact artifact, verifies the authenticated node-agent surface, and deletes the canary. A capacity, billing, VM-scheduler, image-download, or runtime-init failure therefore stops the workflow before a real node is drained. Keep at least one worker's CPU, RAM, and disk allocation available as rollout headroom.
+The `production` and `staging` API is unavailable while the sole control plane is upgraded or restarted. The workflow must report this expected interruption rather than describe it as failover. Existing production worker workloads may continue, but scheduling and reconciliation pause.
 
-After the canary passes, the workflow uses Zerops' direct app-version deployment path for each node; no unreviewed source or repository secret is included, and the rollout does not depend on temporary Zerops build-container availability. Artifact checksums are retained with the one-day workflow evidence.
-6. After all nodes pass, the workflow persists the new Zerops `K8S_VERSION`, node-image tag/object/checksum contract, reconciles the compatibility-approved add-ons, and runs acceptance plus optional full CNCF conformance.
+## Controlled upgrade procedure
 
-The target is never taken from an unrestricted workflow input: the confirmation must match the reviewed repository pin. The agent accepts only canonical patch versions, the same minor or exactly the next minor, and the matching pinned Debian package. Its API exposes no generic command execution. A failed apply sets the Zerops lock to `upgrade-failed`; every other mutating workflow remains blocked until the same controlled workflow safely resumes. Kubernetes/etcd downgrade is not used as rollback.
+1. Update `KUBERNETES_VERSION` and `KUBERNETES_PACKAGE_VERSION` together in [`versions.env`](../versions.env), plus matching profile/import node-image variables. Do not skip a minor version or downgrade.
+2. Review the selected profile's compatibility tuple. `full` includes Calico, Istio, Longhorn and Gateway API; `production` includes Calico, Traefik, Longhorn and Gateway API; `staging` includes Calico, Traefik and Gateway API. Add the exact reviewed tuple to [`upgrade-policy.json`](../upgrade-policy.json).
+3. Dispatch **Upgrade Zerops Kubernetes version** with the live `profile`, `confirm_target` exactly equal to `v<KUBERNETES_VERSION>`, and `plan_only=true`.
+4. Review the sanitized plan and, when supported, recovery evidence. Dispatch the same commit/profile/target with `plan_only=false`.
+5. The workflow cordons and drains one node at a time, verifies its kubelet at the target, waits for API and profile-supported storage health, then uncordons it. A retry skips nodes already at the target.
+6. After every node passes, the workflow persists the version/image contract, reconciles only that profile's add-ons, and runs its acceptance level.
 
-Rollback application/add-on manifests through Git. When a control-plane upgrade cannot be repaired, use the fresh verified etcd and encrypted identity recovery set to restore compatible fresh nodes. Never run a Kubernetes or etcd downgrade over the failed cluster.
+Before the first drain, the workflow tests and builds the exact committed node-agent artifact. `full` and `production` may cache the image in `k8sbackups`; staging builds its node image locally in each Docker runtime and must not acquire an S3 dependency.
+
+The target is never taken from an unrestricted input: the confirmation must match the reviewed repository pin and policy. Only the same minor or next minor is accepted. A failed applied upgrade sets `upgrade-failed`; other mutations remain blocked until the same controlled workflow resumes or the explicit recovery path succeeds.
+
+Application and add-on manifests roll back through Git. Kubernetes and etcd are never downgraded in place. For `full` or `production`, use the fresh verified recovery set when an incompatible control-plane failure requires rebuild. Staging is destroyed and recreated from the pinned repository state.

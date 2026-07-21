@@ -19,7 +19,7 @@ image="zerops-k8s-node:v${KUBERNETES_VERSION}"
 object="node-images/zerops-k8s-node-v${KUBERNETES_VERSION}.tar.gz"
 
 load_zerops_env
-if [[ "${RECONCILE_EXISTING:-false}" != true ]]; then
+if [[ "${RECONCILE_EXISTING:-false}" != true && "$NODE_IMAGE_MODE" == object-storage ]]; then
   require docker
   log "building nested node image $image"
   docker build --pull \
@@ -65,20 +65,23 @@ deploy_one() {
   die "deployment upload failed after three attempts: $service"
 }
 
-deploy_one k8sedge edge
+if [[ "$EDGE_ENABLED" == true ]]; then
+  edge_setup=$(jq -er --arg hostname "$EDGE_HOSTNAME" \
+    '.services[] | select(.hostname == $hostname) | .setup' "$PROFILE_FILE")
+  deploy_one "$EDGE_HOSTNAME" "$edge_setup"
+fi
 
 if [[ "${RECONCILE_EXISTING:-false}" != true ]]; then
-  for batch in 'k8scp1:controlplane1 k8scp2:controlplane2 k8scp3:controlplane3' \
-               'k8sworker1:worker1 k8sworker2:worker2 k8sworker3:worker3'; do
-    pids=()
-    for pair in $batch; do
-      deploy_one "${pair%%:*}" "${pair##*:}" & pids+=("$!")
-    done
-    for pid in "${pids[@]}"; do wait "$pid"; done
-  done
+  pids=()
+  while IFS=$'\t' read -r service setup; do
+    deploy_one "$service" "$setup" & pids+=("$!")
+  done < <(jq -r '.services[] | select(.type | startswith("docker@")) | [.hostname,.setup] | @tsv' "$PROFILE_FILE")
+  for pid in "${pids[@]}"; do wait "$pid"; done
 else
   log 'preserving running nested node state during in-place reconciliation'
 fi
 
-deploy_one prometheus prometheus
-deploy_one grafana grafana
+if [[ $(profile_json '.addons.observability') == advanced ]]; then
+  deploy_one prometheus prometheus
+  deploy_one grafana grafana
+fi

@@ -5,6 +5,10 @@ ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/lib.sh"
 
+if [[ "$K8S_PROFILE" != full ]]; then
+  exec "$ROOT_DIR/scripts/acceptance-profile.sh" "$@"
+fi
+
 require_env KUBECONFIG ZEROPS_PROJECT_ID ZEROPS_TOKEN
 artifact_dir=${RUNNER_TEMP:-$ROOT_DIR/artifacts}/evidence
 mkdir -p "$artifact_dir"

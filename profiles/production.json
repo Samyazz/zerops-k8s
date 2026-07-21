@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "name": "production",
+  "default": false,
+  "project": {
+    "corePackage": "SERIOUS"
+  },
+  "topology": {
+    "controlPlanes": ["k8scp1"],
+    "workers": ["k8sworker1", "k8sworker2"],
+    "optionalWorkers": ["k8sworker3"],
+    "controlPlaneEndpoint": "k8sedge.zerops:6443",
+    "edge": {
+      "enabled": true,
+      "hostname": "k8sedge",
+      "containers": 2
+    },
+    "backup": {
+      "enabled": true,
+      "hostname": "k8sbackups",
+      "quotaGb": 25
+    }
+  },
+  "nodeImage": {
+    "mode": "object-storage"
+  },
+  "addons": {
+    "cni": "calico",
+    "gateway": "traefik",
+    "gatewayReplicas": 2,
+    "serviceMesh": false,
+    "storage": "longhorn",
+    "storageReplicas": 2,
+    "metricsServerReplicas": 2,
+    "certManager": false,
+    "dashboard": false,
+    "observability": "platform",
+    "demo": "production",
+    "security": true
+  },
+  "capabilities": {
+    "backup": true,
+    "restore": true,
+    "horizontalResize": true,
+    "storageHealth": true,
+    "controlPlaneFailover": false,
+    "workerDisruption": true
+  },
+  "acceptance": {
+    "level": "sonobuoy-quick"
+  },
+  "services": [
+    {"hostname": "k8scp1", "type": "docker@26.1.5", "setup": "controlplane1-production", "minContainers": 1, "maxContainers": 1, "resources": {"cpuMode": "DEDICATED", "cpu": 4, "ramGb": 8, "diskGb": 20}},
+    {"hostname": "k8sworker1", "type": "docker@26.1.5", "setup": "worker1-production", "minContainers": 1, "maxContainers": 1, "resources": {"cpuMode": "DEDICATED", "cpu": 4, "ramGb": 8, "diskGb": 50}},
+    {"hostname": "k8sworker2", "type": "docker@26.1.5", "setup": "worker2-production", "minContainers": 1, "maxContainers": 1, "resources": {"cpuMode": "DEDICATED", "cpu": 4, "ramGb": 8, "diskGb": 50}},
+    {"hostname": "k8sedge", "type": "go@1.22", "setup": "edge-production", "minContainers": 2, "maxContainers": 2, "resources": {"cpuMode": "SHARED", "minCpu": 1, "maxCpu": 2, "minRamGb": 0.5, "maxRamGb": 1, "minDiskGb": 1, "maxDiskGb": 2}},
+    {"hostname": "k8sbackups", "type": "object-storage", "setup": null, "objectStorageSizeGb": 25}
+  ]
+}
