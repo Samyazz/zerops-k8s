@@ -255,6 +255,16 @@ for service in "${order[@]}"; do
       kubectl label node "$service" node.longhorn.io/create-default-disk=true --overwrite >/dev/null
     fi
   fi
+  if [[ "$K8S_PROFILE" == staging && "$service" == k8sworker* && "$drained" == true ]]; then
+    # The single staging worker is also the only eligible Typha host. Leaving
+    # it cordoned until Calico is Ready creates a dependency cycle: Typha
+    # cannot schedule, so calico-node cannot make the node Ready. Make the
+    # recovered worker schedulable as soon as it re-registers.
+    log "uncordoning the single staging worker so Calico Typha can recover"
+    kubectl uncordon "$service" >/dev/null
+    current_drained=false
+    drained=false
+  fi
   kubectl wait "node/$service" --for=condition=Ready --timeout=15m
   if [[ "$disk_replacement" == true ]]; then
     wait_longhorn_disk_ready "$service"

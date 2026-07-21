@@ -199,6 +199,14 @@ class WorkflowProfileContractTests(unittest.TestCase):
         disruption = acceptance.index('run_node_recovery_tests', guard)
         self.assertLess(guard, disruption)
 
+    def test_staging_rollout_breaks_the_single_worker_typha_dependency_cycle(self):
+        rollout = (ROOT / "scripts" / "redeploy-node-agents.sh").read_text(encoding="utf-8")
+        self.assertIn('"$K8S_PROFILE" == staging', rollout)
+        self.assertIn('uncordoning the single staging worker so Calico Typha can recover', rollout)
+        uncordon = rollout.index('uncordoning the single staging worker')
+        ready_wait = rollout.index('kubectl wait "node/$service" --for=condition=Ready', uncordon)
+        self.assertLess(uncordon, ready_wait)
+
     def test_compact_profiles_collect_platform_logs_and_resource_statistics(self):
         acceptance = (ROOT / "scripts" / "acceptance-profile.sh").read_text(encoding="utf-8")
         self.assertIn("collect_platform_log_evidence", acceptance)
