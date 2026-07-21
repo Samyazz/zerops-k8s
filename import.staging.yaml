@@ -28,11 +28,6 @@ services:
     startWithoutCode: true
     minContainers: 1
     maxContainers: 1
-    envSecrets:
-      K8S_AGENT_TOKEN: <@generateRandomString(<64>)>
-      K8S_BOOTSTRAP_TOKEN: <@generateRandomInt(<100000>,<999999>)>.<@generateRandomInt(<10000000>,<99999999>)><@generateRandomInt(<10000000>,<99999999>)>
-      K8S_CERTIFICATE_KEY: <@generateRandomBytes(<32>)|toHex>
-      K8S_ENCRYPTION_KEY: <@generateRandomBytes(<32>)|toHex>
     verticalAutoscaling:
       cpuMode: SHARED
       minCpu: 2

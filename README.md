@@ -58,7 +58,7 @@ The imports are alternatives, not services to import side-by-side. Use exactly o
 
 Paste one raw file into **Import a project** in the Zerops dashboard, or download it and run `zcli project project-import FILE`. To operate in the existing project, use the profile-aware deployment workflow; do not paste a second profile import over a running cluster. See [profile and publishing details](docs/profiles.md).
 
-[`zerops.yaml`](zerops.yaml) defines the shared node and edge build/run setups. The public imports contain generated secret expressions and references only—never credential values.
+[`zerops.yaml`](zerops.yaml) defines the shared node and edge build/run setups. The public imports contain no cluster credential values; the deployment workflow generates them locally and stores them as sensitive Zerops project secrets before any node code is deployed.
 
 ## Access
 

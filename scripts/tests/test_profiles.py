@@ -206,25 +206,26 @@ class ProfileContractTests(unittest.TestCase):
                     self.assertIn(f"minDisk: {disk}", block)
                     self.assertIn(f"maxDisk: {disk}", block)
 
-    def test_new_imports_contain_only_generated_secret_values(self):
+    def test_new_imports_defer_cluster_secrets_to_the_workflow(self):
+        library = (ROOT / "scripts/lib.sh").read_text(encoding="utf-8")
+        deploy = (ROOT / "scripts/deploy.sh").read_text(encoding="utf-8")
         for name in ("production", "staging"):
             text = import_path(name).read_text(encoding="utf-8")
-            values = []
-            in_secrets = False
-            for line in text.splitlines():
-                if line == "    envSecrets:":
-                    in_secrets = True
-                    continue
-                if in_secrets and re.match(r"^    [A-Za-z]", line):
-                    in_secrets = False
-                if in_secrets:
-                    match = re.match(r"^      [A-Z0-9_]+: (.+)$", line)
-                    if match:
-                        values.append(match.group(1))
             with self.subTest(profile=name):
-                self.assertTrue(values)
-                self.assertTrue(all(value.startswith("<@") for value in values), values)
+                self.assertNotIn("K8S_AGENT_TOKEN:", text)
+                self.assertNotIn("K8S_BOOTSTRAP_TOKEN:", text)
+                self.assertNotIn("K8S_CERTIFICATE_KEY:", text)
+                self.assertNotIn("K8S_ENCRYPTION_KEY:", text)
                 self.assertNotRegex(text, r"github_pat_|gh[pousr]_[A-Za-z0-9]{20,}")
+        for key in (
+            "K8S_AGENT_TOKEN",
+            "K8S_BOOTSTRAP_TOKEN",
+            "K8S_CERTIFICATE_KEY",
+            "K8S_ENCRYPTION_KEY",
+        ):
+            self.assertIn(f'store_project_secret "$key"', library)
+        self.assertIn("rotate_project_cluster_secrets", deploy)
+        self.assertIn("ensure_project_cluster_secrets", deploy)
 
     def test_import_setups_exist_and_only_reference_present_services(self):
         zerops_text = (ROOT / "zerops.yaml").read_text(encoding="utf-8")

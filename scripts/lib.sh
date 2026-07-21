@@ -438,3 +438,45 @@ store_project_variable() {
   process_id=$(jq -er '.id' "$response")
   wait_public_process "$process_id"
 }
+
+generate_cluster_secret() {
+  local key=${1:?cluster secret key is required}
+  require openssl
+  case "$key" in
+    K8S_AGENT_TOKEN|K8S_CERTIFICATE_KEY|K8S_ENCRYPTION_KEY)
+      openssl rand -hex 32
+      ;;
+    K8S_BOOTSTRAP_TOKEN)
+      printf '%s.%s\n' "$(openssl rand -hex 3)" "$(openssl rand -hex 8)"
+      ;;
+    *) die "unsupported generated cluster secret: $key" ;;
+  esac
+}
+
+rotate_project_cluster_secrets() {
+  local key value
+  log 'rotating clean-cluster credentials into Zerops project secrets'
+  for key in K8S_AGENT_TOKEN K8S_BOOTSTRAP_TOKEN K8S_CERTIFICATE_KEY K8S_ENCRYPTION_KEY; do
+    value=$(generate_cluster_secret "$key")
+    store_project_secret "$key" "$value"
+  done
+  load_zerops_env
+  require_env K8S_AGENT_TOKEN K8S_BOOTSTRAP_TOKEN K8S_CERTIFICATE_KEY K8S_ENCRYPTION_KEY
+}
+
+ensure_project_cluster_secrets() {
+  local key value project_env
+  project_env=$(mktemp)
+  zcli project env -P "$ZEROPS_PROJECT_ID" >"$project_env"
+  for key in K8S_AGENT_TOKEN K8S_BOOTSTRAP_TOKEN K8S_CERTIFICATE_KEY K8S_ENCRYPTION_KEY; do
+    if grep -q "^${key}=" "$project_env"; then
+      continue
+    fi
+    value=${!key:-}
+    [[ -n "$value" ]] || value=$(generate_cluster_secret "$key")
+    store_project_secret "$key" "$value"
+  done
+  rm -f "$project_env"
+  load_zerops_env
+  require_env K8S_AGENT_TOKEN K8S_BOOTSTRAP_TOKEN K8S_CERTIFICATE_KEY K8S_ENCRYPTION_KEY
+}

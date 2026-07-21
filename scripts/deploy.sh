@@ -88,8 +88,15 @@ elif [[ -n "$project_state" && "$project_state" != destroyed ]]; then
 else
   export RECONCILE_EXISTING=false
   set_cluster_tag operation create
-  "$ROOT_DIR/scripts/reconcile-profile-services.sh" apply
+  RECREATE_TARGET_RUNTIME_SERVICES=true \
+    "$ROOT_DIR/scripts/reconcile-profile-services.sh" apply
   set_profile_resource_tags
+fi
+
+if [[ "$RECONCILE_EXISTING" == true ]]; then
+  ensure_project_cluster_secrets
+else
+  rotate_project_cluster_secrets
 fi
 
 if [[ "$RECONCILE_EXISTING" == true ]]; then

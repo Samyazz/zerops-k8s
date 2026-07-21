@@ -90,10 +90,6 @@ zerops:
         K8S_MODE: node
         K8S_NODE_ROLE: control-plane
         K8S_NODE_NAME: k8scp2
-        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
-        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
-        K8S_CERTIFICATE_KEY: ${k8scp1_K8S_CERTIFICATE_KEY}
-        K8S_ENCRYPTION_KEY: ${k8scp1_K8S_ENCRYPTION_KEY}
         AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
         AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
         AWS_DEFAULT_REGION: us-east-1
@@ -144,10 +140,6 @@ zerops:
         K8S_MODE: node
         K8S_NODE_ROLE: control-plane
         K8S_NODE_NAME: k8scp3
-        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
-        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
-        K8S_CERTIFICATE_KEY: ${k8scp1_K8S_CERTIFICATE_KEY}
-        K8S_ENCRYPTION_KEY: ${k8scp1_K8S_ENCRYPTION_KEY}
         AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
         AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
         AWS_DEFAULT_REGION: us-east-1
@@ -198,8 +190,6 @@ zerops:
         K8S_MODE: node
         K8S_NODE_ROLE: worker
         K8S_NODE_NAME: k8sworker1
-        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
-        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
         AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
         AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
         AWS_DEFAULT_REGION: us-east-1
@@ -250,8 +240,6 @@ zerops:
         K8S_MODE: node
         K8S_NODE_ROLE: worker
         K8S_NODE_NAME: k8sworker2
-        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
-        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
         AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
         AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
         AWS_DEFAULT_REGION: us-east-1
@@ -302,8 +290,6 @@ zerops:
         K8S_MODE: node
         K8S_NODE_ROLE: worker
         K8S_NODE_NAME: k8sworker3
-        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
-        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
         AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
         AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
         AWS_DEFAULT_REGION: us-east-1
@@ -356,8 +342,6 @@ zerops:
         K8S_MODE: node
         K8S_NODE_ROLE: worker
         K8S_NODE_NAME: k8sworker4
-        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
-        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
         AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
         AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
         AWS_DEFAULT_REGION: us-east-1
@@ -471,8 +455,6 @@ zerops:
         K8S_MODE: node
         K8S_NODE_ROLE: worker
         K8S_NODE_NAME: k8sworker1
-        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
-        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
         AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
         AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
         AWS_DEFAULT_REGION: us-east-1
@@ -492,8 +474,6 @@ zerops:
         K8S_MODE: node
         K8S_NODE_ROLE: worker
         K8S_NODE_NAME: k8sworker2
-        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
-        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
         AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
         AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
         AWS_DEFAULT_REGION: us-east-1
@@ -515,8 +495,6 @@ zerops:
         K8S_MODE: node
         K8S_NODE_ROLE: worker
         K8S_NODE_NAME: k8sworker3
-        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
-        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
         AWS_ACCESS_KEY_ID: ${k8sbackups_accessKeyId}
         AWS_SECRET_ACCESS_KEY: ${k8sbackups_secretAccessKey}
         AWS_DEFAULT_REGION: us-east-1
@@ -638,8 +616,6 @@ zerops:
         K8S_MODE: node
         K8S_NODE_ROLE: worker
         K8S_NODE_NAME: k8sworker1
-        K8S_AGENT_TOKEN: ${k8scp1_K8S_AGENT_TOKEN}
-        K8S_BOOTSTRAP_TOKEN: ${k8scp1_K8S_BOOTSTRAP_TOKEN}
       healthCheck: *stagingNodeHealth
       start: ./dist/zerops-k8s
 
