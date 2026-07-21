@@ -227,6 +227,7 @@ class ProfileContractTests(unittest.TestCase):
         self.assertIn("rotate_project_cluster_secrets", deploy)
         self.assertIn("ensure_project_cluster_secrets", deploy)
         self.assertIn("api_request_file POST /project/search", library)
+        self.assertIn('{name:"clientId",operator:"eq",value:$client_id}', library)
         self.assertIn('path="/project-env/${env_id}"', library)
         self.assertIn("method=PUT", library)
         self.assertIn('store_project_env "$1" "$2" true', library)

@@ -417,9 +417,13 @@ wait_longhorn_disk_ready() {
 
 project_env_id() {
   local key=$1 response payload env_id
+  require_env ZEROPS_CLIENT_ID
   response=$(mktemp)
-  payload=$(jq -cn --arg project_id "$ZEROPS_PROJECT_ID" \
-    '{search:[{name:"id",operator:"eq",value:$project_id}],sort:[],limit:1}')
+  payload=$(jq -cn --arg project_id "$ZEROPS_PROJECT_ID" --arg client_id "$ZEROPS_CLIENT_ID" \
+    '{search:[
+      {name:"clientId",operator:"eq",value:$client_id},
+      {name:"id",operator:"eq",value:$project_id}
+    ],sort:[],limit:1}')
   if ! api_request_file POST /project/search "$payload" "$response"; then
     rm -f "$response"
     return 1
