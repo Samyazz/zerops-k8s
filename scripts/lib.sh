@@ -415,28 +415,53 @@ wait_longhorn_disk_ready() {
   die "replacement Longhorn disk did not become Ready: $node"
 }
 
-store_project_secret() {
-  local key=$1 value=$2 response payload process_id
-  [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "invalid Zerops project secret key: $key"
-  [[ "$value" != *$'\n'* ]] || die "secret $key contains a newline and cannot be stored"
-  payload=$(jq -cn --arg key "$key" --arg content "$value" \
-    '{key:$key, content:$content, sensitive:true}')
+project_env_id() {
+  local key=$1 response payload env_id
   response=$(mktemp)
-  api_request_file POST "/project/${ZEROPS_PROJECT_ID}/env" "$payload" "$response"
+  payload=$(jq -cn --arg project_id "$ZEROPS_PROJECT_ID" \
+    '{search:[{name:"id",operator:"eq",value:$project_id}],sort:[],limit:1}')
+  if ! api_request_file POST /project/search "$payload" "$response"; then
+    rm -f "$response"
+    return 1
+  fi
+  env_id=$(jq -r --arg key "$key" '.items[0].envList[]? | select(.key == $key) | .id' "$response" | head -n 1)
+  rm -f "$response"
+  printf '%s\n' "$env_id"
+}
+
+store_project_env() {
+  local key=$1 value=$2 sensitive=$3 response payload process_id env_id method path
+  [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "invalid Zerops project environment key: $key"
+  [[ "$value" != *$'\n'* ]] || die "project environment value $key contains a newline and cannot be stored"
+  [[ "$sensitive" == true || "$sensitive" == false ]] || die "invalid sensitivity for $key: $sensitive"
+
+  payload=$(jq -cn --arg key "$key" --arg content "$value" --argjson sensitive "$sensitive" \
+    '{key:$key, content:$content, sensitive:$sensitive}')
+  env_id=$(project_env_id "$key")
+  if [[ -n "$env_id" ]]; then
+    method=PUT
+    path="/project-env/${env_id}"
+  else
+    method=POST
+    path="/project/${ZEROPS_PROJECT_ID}/env"
+  fi
+
+  response=$(mktemp)
+  if ! api_request_file "$method" "$path" "$payload" "$response"; then
+    rm -f "$response"
+    return 1
+  fi
   process_id=$(jq -er '.id' "$response")
+  rm -f "$response"
   wait_public_process "$process_id"
 }
 
+store_project_secret() {
+  store_project_env "$1" "$2" true
+}
+
 store_project_variable() {
-  local key=$1 value=$2 response payload process_id
-  [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "invalid Zerops project variable key: $key"
-  [[ "$value" != *$'\n'* ]] || die "project variable $key contains a newline and cannot be stored"
-  payload=$(jq -cn --arg key "$key" --arg content "$value" \
-    '{key:$key, content:$content, sensitive:false}')
-  response=$(mktemp)
-  api_request_file POST "/project/${ZEROPS_PROJECT_ID}/env" "$payload" "$response"
-  process_id=$(jq -er '.id' "$response")
-  wait_public_process "$process_id"
+  store_project_env "$1" "$2" false
 }
 
 generate_cluster_secret() {

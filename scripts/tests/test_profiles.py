@@ -226,6 +226,11 @@ class ProfileContractTests(unittest.TestCase):
             self.assertIn(f'store_project_secret "$key"', library)
         self.assertIn("rotate_project_cluster_secrets", deploy)
         self.assertIn("ensure_project_cluster_secrets", deploy)
+        self.assertIn("api_request_file POST /project/search", library)
+        self.assertIn('path="/project-env/${env_id}"', library)
+        self.assertIn("method=PUT", library)
+        self.assertIn('store_project_env "$1" "$2" true', library)
+        self.assertIn('store_project_env "$1" "$2" false', library)
 
     def test_import_setups_exist_and_only_reference_present_services(self):
         zerops_text = (ROOT / "zerops.yaml").read_text(encoding="utf-8")
