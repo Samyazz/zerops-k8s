@@ -160,6 +160,14 @@ class WorkflowProfileContractTests(unittest.TestCase):
         self.assertIn('zcli service deploy "$service"', deploy)
         self.assertIn('--working-dir "$NODE_AGENT_ARTIFACT_DIR"', deploy)
 
+    def test_network_probes_use_the_distroless_agnhost_binary(self):
+        for name in ("acceptance.sh", "acceptance-profile.sh"):
+            text = (ROOT / "scripts" / name).read_text(encoding="utf-8")
+            with self.subTest(script=name):
+                self.assertIn("/agnhost connect --timeout=10s", text)
+                self.assertNotIn("exec \"$source_pod\" -- wget", text)
+                self.assertNotIn("exec \"${proof_pods[0]}\" -- wget", text)
+
     def test_manual_jobs_are_owner_only_and_no_push_trigger_exists(self):
         for name in PROFILE_WORKFLOWS:
             data = workflow(name)

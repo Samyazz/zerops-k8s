@@ -334,11 +334,16 @@ kubectl -n workloads exec "${proof_pods[0]}" -- getent hosts kubernetes.default.
   | tee "$artifact_dir/dns.txt"
 if (( expected_workers > 1 )); then
   target_ip=$(kubectl -n workloads get pod "${proof_pods[1]}" -o jsonpath='{.status.podIP}')
-  kubectl -n workloads exec "${proof_pods[0]}" -- wget -qO- "http://$target_ip:8080/hostname" \
-    | tee "$artifact_dir/cross-node-network.txt"
+  kubectl -n workloads exec "${proof_pods[0]}" -- \
+    /agnhost connect --timeout=10s "$target_ip:8080"
+  jq -n --arg source "${proof_pods[0]}" --arg target "$target_ip:8080" \
+    '{sourcePod:$source,target:$target,tcpConnected:true}' >"$artifact_dir/cross-node-network.json"
 else
-  kubectl -n workloads exec "${proof_pods[0]}" -- wget -qO- http://demo.workloads.svc.cluster.local:8080/hostname \
-    | tee "$artifact_dir/service-network.txt"
+  kubectl -n workloads exec "${proof_pods[0]}" -- \
+    /agnhost connect --timeout=10s demo.workloads.svc.cluster.local:8080
+  jq -n --arg source "${proof_pods[0]}" \
+    '{sourcePod:$source,target:"demo.workloads.svc.cluster.local:8080",tcpConnected:true}' \
+    >"$artifact_dir/service-network.json"
 fi
 
 verify_security_controls

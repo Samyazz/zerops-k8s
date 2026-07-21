@@ -230,6 +230,7 @@ class ProfileContractTests(unittest.TestCase):
         self.assertIn('{name:"clientId",operator:"eq",value:$client_id}', library)
         self.assertIn('path="/project-env/${env_id}"', library)
         self.assertIn("method=PUT", library)
+        self.assertIn("sed -i '/^K8S_PROFILE=/d'", library)
         self.assertIn('store_project_env "$1" "$2" true', library)
         self.assertIn('store_project_env "$1" "$2" false', library)
 

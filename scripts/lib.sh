@@ -63,6 +63,10 @@ load_zerops_env() {
   # Write to a file first so a timed-out/API-error response is never sourced.
   for attempt in 1 2 3 4 5; do
     if timeout 60 zcli project env -P "$ZEROPS_PROJECT_ID" --service k8scp1 >"$env_file"; then
+      # The workflow-selected descriptor is immutable for the whole process.
+      # A stored project marker with the same name is metadata, not an input
+      # allowed to overwrite the readonly selection made above.
+      sed -i '/^K8S_PROFILE=/d' "$env_file"
       set -a
       # shellcheck disable=SC1090
       if ! source "$env_file"; then

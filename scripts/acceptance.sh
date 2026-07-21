@@ -131,7 +131,9 @@ mapfile -t proof_pods < <(kubectl -n workloads get pods -l app=network-proof -o 
 [[ ${#proof_pods[@]} -eq "$expected_workers" ]]
 source_pod=${proof_pods[0]}
 target_ip=$(kubectl -n workloads get pod "${proof_pods[1]}" -o jsonpath='{.status.podIP}')
-kubectl -n workloads exec "$source_pod" -- wget -qO- "http://$target_ip:8080/hostname" | tee "$artifact_dir/cross-node-network.txt"
+kubectl -n workloads exec "$source_pod" -- /agnhost connect --timeout=10s "$target_ip:8080"
+jq -n --arg source "$source_pod" --arg target "$target_ip:8080" \
+  '{sourcePod:$source,target:$target,tcpConnected:true}' >"$artifact_dir/cross-node-network.json"
 kubectl -n workloads exec "$source_pod" -- getent hosts kubernetes.default.svc.cluster.local | tee "$artifact_dir/dns.txt"
 
 curl --fail --silent http://k8sedge:8080/healthz | tee "$artifact_dir/ingress.txt"
