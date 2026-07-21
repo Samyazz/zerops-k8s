@@ -73,7 +73,13 @@ expected_workers=${expected_workers:-${#WORKERS[@]}}
 workers=("${WORKERS[@]}")
 mapfile -t optional_workers < <(profile_json '.topology.optionalWorkers[]?')
 if (( expected_workers > ${#WORKERS[@]} )); then workers+=("${optional_workers[@]}"); fi
-upgrade_order=("${CONTROL_PLANES[@]}" "${workers[@]}")
+if [[ "$K8S_PROFILE" == production ]]; then
+  # Keep the compact-production data plane serving while workers roll, then
+  # accept the documented API outage when its single control plane is last.
+  upgrade_order=("${workers[@]}" "${CONTROL_PLANES[@]}")
+else
+  upgrade_order=("${CONTROL_PLANES[@]}" "${workers[@]}")
+fi
 
 versions_json=$(kubectl get nodes -o json | jq \
   '[.items[] | {name:.metadata.name,version:.status.nodeInfo.kubeletVersion}] | sort_by(.name)')

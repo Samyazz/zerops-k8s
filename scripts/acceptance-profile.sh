@@ -423,7 +423,9 @@ else
 fi
 
 verify_security_controls
-run_node_recovery_tests
+if [[ "${SKIP_DISRUPTION_TESTS:-false}" != true ]]; then
+  run_node_recovery_tests
+fi
 wait_all_workload_pods_ready
 collect_platform_log_evidence
 collect_platform_stats_evidence

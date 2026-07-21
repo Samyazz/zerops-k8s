@@ -187,6 +187,18 @@ class WorkflowProfileContractTests(unittest.TestCase):
         self.assertNotIn(".nodes | length >= 6", restore)
         self.assertNotIn("numberOfReplicas: 3", restore)
 
+    def test_production_upgrade_rolls_workers_before_single_control_plane(self):
+        upgrade = (ROOT / "scripts" / "upgrade-cluster.sh").read_text(encoding="utf-8")
+        production = upgrade.index('[[ "$K8S_PROFILE" == production ]]')
+        workers_first = upgrade.index('upgrade_order=("${workers[@]}" "${CONTROL_PLANES[@]}")')
+        self.assertLess(production, workers_first)
+
+    def test_maintenance_acceptance_can_skip_duplicate_disruptions(self):
+        acceptance = (ROOT / "scripts" / "acceptance-profile.sh").read_text(encoding="utf-8")
+        guard = acceptance.index('${SKIP_DISRUPTION_TESTS:-false}')
+        disruption = acceptance.index('run_node_recovery_tests', guard)
+        self.assertLess(guard, disruption)
+
     def test_compact_profiles_collect_platform_logs_and_resource_statistics(self):
         acceptance = (ROOT / "scripts" / "acceptance-profile.sh").read_text(encoding="utf-8")
         self.assertIn("collect_platform_log_evidence", acceptance)
