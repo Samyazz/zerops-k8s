@@ -25,8 +25,6 @@ trap finish EXIT INT TERM
 shellcheck "$ROOT_DIR"/scripts/*.sh
 (cd "$ROOT_DIR" && go test ./... && go vet ./...)
 "$ROOT_DIR/scripts/validate-recipe.sh" "$K8S_PROFILE"
-load_zerops_env
-require_env K8S_AGENT_TOKEN K8S_BOOTSTRAP_TOKEN K8S_CERTIFICATE_KEY K8S_ENCRYPTION_KEY
 project_state=$(cluster_tag_value state)
 project_repository=$(cluster_tag_value repository)
 project_profile=$(cluster_tag_value profile)
@@ -38,6 +36,10 @@ if [[ "$project_state" == cleanup-failed ]]; then
 fi
 if [[ -n "$project_repository" && "$project_repository" != unknown && "${project_repository,,}" != "${GITHUB_REPOSITORY,,}" ]]; then
   die "this project is already managed by $project_repository"
+fi
+if [[ -n "$project_state" && "$project_state" != destroyed ]]; then
+  load_zerops_env
+  require_env K8S_AGENT_TOKEN K8S_BOOTSTRAP_TOKEN K8S_CERTIFICATE_KEY K8S_ENCRYPTION_KEY
 fi
 
 zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
