@@ -269,6 +269,16 @@ class WorkflowProfileContractTests(unittest.TestCase):
                     self.assertIn("profile", step["with"]["name"].lower())
                 self.assertIn("profile-contract.json", workflow_text(name))
 
+    def test_every_artifact_is_sanitized_immediately_before_upload(self):
+        evidence_workflows = [name for name in PROFILE_WORKFLOWS if name != "deploy.yml"]
+        for name in evidence_workflows:
+            text = workflow_text(name)
+            with self.subTest(workflow=name):
+                sanitizer = text.rfind('./scripts/sanitize-evidence-tree.sh "$RUNNER_TEMP/evidence"')
+                upload = text.rfind("uses: actions/upload-artifact@")
+                self.assertGreater(sanitizer, -1)
+                self.assertGreater(upload, sanitizer)
+
     def test_redactor_removes_required_sensitive_classes(self):
         sample = (
             "Authorization: Bearer abc.def.ghi\n"

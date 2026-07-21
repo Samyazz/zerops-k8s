@@ -70,6 +70,11 @@ jobs:
             '{profile: $profile, operation: "destroy", status: $status, resolvedContract: .}' \
             "$PROFILE_FILE" >"$RUNNER_TEMP/evidence/profile-contract.json"
 
+      - name: Sanitize destroy evidence before upload
+        if: always()
+        shell: bash
+        run: ./scripts/sanitize-evidence-tree.sh "$RUNNER_TEMP/evidence"
+
       - name: Upload sanitized destroy evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

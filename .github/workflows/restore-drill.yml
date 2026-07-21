@@ -97,6 +97,11 @@ jobs:
             '{profile: $profile, resolvedContract: .}' "$PROFILE_FILE" \
             >"$RUNNER_TEMP/evidence/profile-contract.json"
 
+      - name: Sanitize restore evidence before upload
+        if: always()
+        shell: bash
+        run: ./scripts/sanitize-evidence-tree.sh "$RUNNER_TEMP/evidence"
+
       - name: Upload sanitized restore evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
