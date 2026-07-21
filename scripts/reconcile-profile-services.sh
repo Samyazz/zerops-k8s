@@ -9,7 +9,8 @@ require jq
 require zcli
 
 mode=${1:-apply}
-[[ "$mode" == plan || "$mode" == apply ]] || die 'usage: reconcile-profile-services.sh [plan|apply]'
+[[ "$mode" == plan || "$mode" == apply || "$mode" == purge ]] \
+  || die 'usage: reconcile-profile-services.sh [plan|apply|purge]'
 
 case "$K8S_PROFILE" in
   full) import_file="$ROOT_DIR/import.yaml" ;;
@@ -88,8 +89,12 @@ wait_absent() {
 
 delete_service() {
   local name=$1
-  log "deleting recipe-owned service not valid for target profile $K8S_PROFILE: $name"
-  [[ "$mode" == apply ]] || return 0
+  if [[ "$mode" == purge ]]; then
+    log "deleting partial recipe-owned service from failed clean creation: $name"
+  else
+    log "deleting recipe-owned service not valid for target profile $K8S_PROFILE: $name"
+  fi
+  [[ "$mode" == apply || "$mode" == purge ]] || return 0
   zcli service delete "$name" -P "$ZEROPS_PROJECT_ID" --confirm
   wait_absent "$name"
 }
@@ -103,6 +108,25 @@ delete_order=(
   k8scp3 k8scp2 k8scp1 k8sedge
   grafanadb prometheusbackups elkstorage k8sbackups
 )
+
+if [[ "$mode" == purge ]]; then
+  for name in "${delete_order[@]}"; do
+    contains "$name" "${known[@]}" || continue
+    service_present "$name" && delete_service "$name"
+  done
+  for name in "${known[@]}"; do
+    service_present "$name" && delete_service "$name"
+  done
+  refresh_inventory
+  leftovers=()
+  for name in "${known[@]}"; do
+    service_present "$name" && leftovers+=("$name")
+  done
+  (( ${#leftovers[@]} == 0 )) \
+    || die "partial recipe-owned services remain after cleanup: ${leftovers[*]}"
+  log 'all partial recipe-owned services from the failed clean creation were removed'
+  exit 0
+fi
 
 for name in "${delete_order[@]}"; do
   contains "$name" "${known[@]}" || continue

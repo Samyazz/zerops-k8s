@@ -127,6 +127,20 @@ class WorkflowProfileContractTests(unittest.TestCase):
                 with self.subTest(profile=profile, capability=capability):
                     self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_failed_clean_creation_has_an_owned_outer_service_purge(self):
+        deploy = (ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
+        cleanup = (ROOT / "scripts" / "cleanup-failed-run.sh").read_text(encoding="utf-8")
+        reconcile = (ROOT / "scripts" / "reconcile-profile-services.sh").read_text(encoding="utf-8")
+        self.assertLess(
+            deploy.index('set_cluster_tag attempt "$GITHUB_RUN_ID"'),
+            deploy.index('"$ROOT_DIR/scripts/reconcile-profile-services.sh" apply'),
+        )
+        self.assertIn('"$ROOT_DIR/scripts/reconcile-profile-services.sh" purge', cleanup)
+        self.assertIn('"$attempt" == "$GITHUB_RUN_ID"', cleanup)
+        self.assertIn('set_cluster_state cleanup-failed', cleanup)
+        self.assertIn('mode" == purge', reconcile)
+        self.assertIn('partial recipe-owned services remain after cleanup', reconcile)
+
     def test_manual_jobs_are_owner_only_and_no_push_trigger_exists(self):
         for name in PROFILE_WORKFLOWS:
             data = workflow(name)

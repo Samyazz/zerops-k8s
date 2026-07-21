@@ -10,6 +10,21 @@ state=$(cluster_tag_value state)
 repository=$(cluster_tag_value repository)
 owner_run=$(cluster_tag_value run)
 operation=$(cluster_tag_value operation)
+attempt=$(cluster_tag_value attempt)
+
+if [[ "$state" == destroyed && "${repository,,}" == "${GITHUB_REPOSITORY,,}" \
+      && "$attempt" == "$GITHUB_RUN_ID" \
+      && ( "$operation" == create || "$operation" == switch ) ]]; then
+  log 'failed clean creation owns partial outer services; removing them before any retry'
+  if ! "$ROOT_DIR/scripts/reconcile-profile-services.sh" purge; then
+    set_cluster_state cleanup-failed "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" || true
+    die 'partial outer-service cleanup failed; later deployments are blocked'
+  fi
+  set_cluster_tag operation cleaned
+  set_cluster_tag attempt complete
+  log 'failed clean creation converged to zero recipe-owned services'
+  exit 0
+fi
 
 if [[ "$state" != deploying || "${repository,,}" != "${GITHUB_REPOSITORY,,}" || "$owner_run" != "$GITHUB_RUN_ID" ]]; then
   log "cleanup skipped because this run does not own the active deployment lock"

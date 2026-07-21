@@ -44,6 +44,7 @@ fi
 
 zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
 vpn_connected=true
+set_cluster_tag attempt "$GITHUB_RUN_ID"
 
 set_profile_resource_tags() {
   local cp worker
@@ -125,6 +126,7 @@ if profile_capability backup; then "$ROOT_DIR/scripts/backup-cluster.sh"; fi
 "$ROOT_DIR/scripts/store-credentials.sh"
 set_cluster_tag profile "$K8S_PROFILE"
 set_cluster_state running "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+set_cluster_tag attempt complete
 
 success=true
 log 'clean-room deployment completed; the validated cluster remains running'
