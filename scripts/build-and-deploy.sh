@@ -6,6 +6,8 @@ ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 source "$ROOT_DIR/scripts/lib.sh"
 # shellcheck disable=SC1091
 source "$ROOT_DIR/versions.env"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/node-agent-artifact.sh"
 
 require_env ZEROPS_PROJECT_ID
 require curl
@@ -42,7 +44,7 @@ if [[ "${RECONCILE_EXISTING:-false}" != true && "$NODE_IMAGE_MODE" == object-sto
 fi
 
 version_name="github-${GITHUB_RUN_ID:-local}-${GITHUB_SHA:-working}"
-deploy_one() {
+deploy_with_build() {
   local service=$1 setup=$2 attempt
   local source_args=(--workspace-state all)
   if [[ ! -d "$ROOT_DIR/.git" ]]; then
@@ -69,23 +71,46 @@ deploy_one() {
   die "deployment upload failed after three attempts: $service"
 }
 
+deploy_runtime_artifact() {
+  local service=$1 setup=$2 attempt result
+  log "deploying prebuilt runtime artifact to $service with setup $setup"
+  for attempt in 1 2 3; do
+    set +e
+    timeout "${ZEROPS_DEPLOY_TIMEOUT:-35m}" zcli service deploy "$service" -P "$ZEROPS_PROJECT_ID" \
+      --setup "$setup" --version-name "${NODE_AGENT_VERSION_NAME}-${service}-${attempt}" \
+      --working-dir "$NODE_AGENT_ARTIFACT_DIR" --path-to-file-or-dir .
+    result=$?
+    set -e
+    (( result == 0 )) && return 0
+    (( result != 124 )) || die "Zerops prebuilt runtime deployment timed out for $service"
+    log "prebuilt runtime deployment failed on attempt $attempt; retrying $service"
+    sleep 5
+  done
+  die "prebuilt runtime deployment failed after three attempts: $service"
+}
+
+if [[ "$EDGE_ENABLED" == true || "${RECONCILE_EXISTING:-false}" != true ]]; then
+  # The reviewed artifact is built and tested on the Actions runner, then sent
+  # directly to each runtime. This avoids depending on a Zerops build container
+  # for the critical node-agent delivery path.
+  prepare_node_agent_artifact
+fi
+
 if [[ "$EDGE_ENABLED" == true ]]; then
   edge_setup=$(jq -er --arg hostname "$EDGE_HOSTNAME" \
     '.services[] | select(.hostname == $hostname) | .setup' "$PROFILE_FILE")
-  deploy_one "$EDGE_HOSTNAME" "$edge_setup"
+  deploy_runtime_artifact "$EDGE_HOSTNAME" "$edge_setup"
 fi
 
 if [[ "${RECONCILE_EXISTING:-false}" != true ]]; then
-  pids=()
   while IFS=$'\t' read -r service setup; do
-    deploy_one "$service" "$setup" & pids+=("$!")
+    deploy_runtime_artifact "$service" "$setup"
   done < <(jq -r '.services[] | select(.type | startswith("docker@")) | [.hostname,.setup] | @tsv' "$PROFILE_FILE")
-  for pid in "${pids[@]}"; do wait "$pid"; done
 else
   log 'preserving running nested node state during in-place reconciliation'
 fi
 
 if [[ $(profile_json '.addons.observability') == advanced ]]; then
-  deploy_one prometheus prometheus
-  deploy_one grafana grafana
+  deploy_with_build prometheus prometheus
+  deploy_with_build grafana grafana
 fi

@@ -156,6 +156,9 @@ class WorkflowProfileContractTests(unittest.TestCase):
         deploy = (ROOT / "scripts" / "build-and-deploy.sh").read_text(encoding="utf-8")
         self.assertIn('"${GITHUB_ACTIONS:-false}" == true', deploy)
         self.assertIn('source_args=(--workspace-state clean)', deploy)
+        self.assertIn("prepare_node_agent_artifact", deploy)
+        self.assertIn('zcli service deploy "$service"', deploy)
+        self.assertIn('--working-dir "$NODE_AGENT_ARTIFACT_DIR"', deploy)
 
     def test_manual_jobs_are_owner_only_and_no_push_trigger_exists(self):
         for name in PROFILE_WORKFLOWS:
