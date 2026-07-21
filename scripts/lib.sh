@@ -292,13 +292,17 @@ safe_drain() {
 }
 
 repair_replaced_longhorn_disk() {
-  local node=$1 replicas deadline ready
+  local node=$1 replicas engines deadline ready reason
   kubectl -n longhorn-system get "nodes.longhorn.io/$node" >/dev/null 2>&1 || return 0
 
   replicas=$(kubectl -n longhorn-system get replicas.longhorn.io -o json | jq \
     --arg node "$node" '[.items[] | select(.spec.nodeID == $node)] | length')
   [[ "$replicas" -eq 0 ]] \
     || die "refusing to replace the stale Longhorn disk record on $node because it still owns $replicas replicas"
+  engines=$(kubectl -n longhorn-system get engines.longhorn.io -o json | jq \
+    --arg node "$node" '[.items[] | select(.spec.nodeID == $node and .status.currentState == "running")] | length')
+  [[ "$engines" -eq 0 ]] \
+    || die "refusing to replace the stale Longhorn disk record on $node because it still owns $engines running engines"
 
   log "recreating the stale empty Longhorn disk record after filesystem replacement: $node"
   deadline=$((SECONDS + 180))
@@ -310,7 +314,23 @@ repair_replaced_longhorn_disk() {
   [[ "$ready" != True ]] || die "node did not become NotReady before Longhorn disk replacement: $node"
   kubectl -n longhorn-system patch "nodes.longhorn.io/$node" --type=merge \
     -p '{"spec":{"allowScheduling":false}}' >/dev/null
-  kubectl -n longhorn-system delete "nodes.longhorn.io/$node" --wait=true >/dev/null
+  # Longhorn's admission webhook rejects deletion while the Kubernetes node
+  # merely reports NotReady. Remove the stale node identity first so Longhorn
+  # observes KubernetesNodeGone. The Longhorn controller may then garbage-
+  # collect its Node object itself, so both outcomes are valid.
+  kubectl delete "node/$node" --ignore-not-found --wait=true >/dev/null
+  deadline=$((SECONDS + 180))
+  while kubectl -n longhorn-system get "nodes.longhorn.io/$node" >/dev/null 2>&1; do
+    reason=$(kubectl -n longhorn-system get "nodes.longhorn.io/$node" \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].reason}' 2>/dev/null || true)
+    [[ "$reason" == KubernetesNodeGone ]] && break
+    (( SECONDS < deadline )) \
+      || die "Longhorn did not observe the removed Kubernetes node before disk replacement: $node"
+    sleep 3
+  done
+  if kubectl -n longhorn-system get "nodes.longhorn.io/$node" >/dev/null 2>&1; then
+    kubectl -n longhorn-system delete "nodes.longhorn.io/$node" --wait=true >/dev/null
+  fi
 }
 
 longhorn_disk_is_empty() {

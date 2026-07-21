@@ -136,6 +136,8 @@ if (( remaining == 0 )); then
   log "all nodes already run the reviewed target $target; the controlled upgrade is a verified no-op"
   export SKIP_DISRUPTION_TESTS=true RUN_FULL_CONFORMANCE=false
   "$ROOT_DIR/scripts/acceptance.sh"
+  set_cluster_state running "${GITHUB_REPOSITORY:-Samyazz/zerops-k8s}" "${GITHUB_RUN_ID:-local}"
+  log "verified no-op upgrade cleared any prior upgrade recovery lock"
   exit 0
 fi
 
