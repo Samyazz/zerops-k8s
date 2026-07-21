@@ -122,6 +122,78 @@ collect_platform_log_evidence() {
   rm -f "$inventory"
 }
 
+collect_platform_stats_evidence() {
+  local inventory expected_ids response payload from till deadline actual_count=0 expected_count
+  local backup_id backup_status backup_usage backup_quota
+  require_env ZEROPS_CLIENT_ID
+  inventory=$(mktemp)
+  expected_ids=$(mktemp)
+  response=$(mktemp)
+  api_request_file GET "/project/${ZEROPS_PROJECT_ID}/service-stack?limit=100" '' "$inventory"
+  jq --argjson runtime_names "$(profile_json '[.services[] | select(.type != "object-storage") | .hostname]')" \
+    '[.list[] | select(.name as $name | $runtime_names | index($name)) | .id] | sort' \
+    "$inventory" >"$expected_ids"
+  expected_count=$(jq 'length' "$expected_ids")
+  (( expected_count > 0 )) || die 'profile has no runtime services for Zerops statistics evidence'
+
+  deadline=$((SECONDS + 300))
+  while (( SECONDS < deadline )); do
+    from=$(date -u -d '20 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+    till=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    payload=$(jq -cn --arg client "$ZEROPS_CLIENT_ID" --arg project "$ZEROPS_PROJECT_ID" \
+      --arg from "$from" --arg till "$till" '{
+        search:[
+          {name:"clientId",operator:"eq",value:$client},
+          {name:"projectId",operator:"eq",value:$project}
+        ],
+        limit:1000,from:$from,till:$till,timeZone:"UTC",
+        groupBy:"serviceStackId",timeGroupBy:"1m"
+      }')
+    if api_request_file POST /stats-history/group-by-search "$payload" "$response"; then
+      actual_count=$(jq --slurpfile expected "$expected_ids" '
+        [.items[]?
+          | select(.serviceStackId as $id | $expected[0] | index($id))
+          | select(
+              (.cpuLimit | type) == "number" and (.cpuUsed | type) == "number"
+              and (.ramLimit | type) == "number" and (.ramUsed | type) == "number"
+            )
+          | .serviceStackId]
+        | unique | length
+      ' "$response")
+      if (( actual_count == expected_count )); then
+        jq --slurpfile expected "$expected_ids" '{
+          groupBy,timeGroupBy,from,till,
+          items:[.items[]
+            | select(.serviceStackId as $id | $expected[0] | index($id))
+            | {from,till,serviceStackId,containerCount,cpuLimit,cpuUsed,vCpuLimit,vCpuUsed,ramLimit,ramUsed,diskLimit,diskUsed}]
+        }' "$response" >"$artifact_dir/zerops-runtime-statistics.json"
+        break
+      fi
+    fi
+    sleep 10
+  done
+  (( actual_count == expected_count )) \
+    || die "fresh Zerops CPU/RAM statistics were unavailable for all $expected_count runtime services"
+
+  if [[ "$BACKUP_ENABLED" == true ]]; then
+    backup_id=$(jq -er --arg name "$BACKUP_HOSTNAME" '.list[] | select(.name == $name) | .id' "$inventory")
+    backup_status=$(jq -er --arg name "$BACKUP_HOSTNAME" '.list[] | select(.name == $name) | .status' "$inventory")
+    backup_usage=$(mktemp)
+    api_request_file GET "/service-stack/${backup_id}/object-storage-size" '' "$backup_usage"
+    backup_quota=$(zcli project env -P "$ZEROPS_PROJECT_ID" \
+      --template '{{if eq .Key "k8sbackups_quotaGBytes"}}{{.Value}}{{end}}' 2>/dev/null \
+      | sed '/^[[:space:]]*$/d' | tail -n 1 | tr -d '"[:space:]')
+    [[ "$backup_quota" =~ ^[0-9]+$ && "$backup_quota" -gt 0 ]] \
+      || die 'production backup quota was unavailable in the resolved Zerops environment'
+    jq --arg service "$BACKUP_HOSTNAME" --arg status "$backup_status" \
+      --argjson quotaGBytes "$backup_quota" \
+      '{service:$service,status:$status,quotaGBytes:$quotaGBytes,diskGBytesUsed,objects}' \
+      "$backup_usage" >"$artifact_dir/zerops-backup-storage.json"
+    rm -f "$backup_usage"
+  fi
+  rm -f "$inventory" "$expected_ids" "$response"
+}
+
 verify_security_controls() {
   local sentinel raw_file audit_marker audit_selector
   sentinel="zerops-encryption-proof-${GITHUB_RUN_ID:-local}-$(date +%s)"
@@ -350,6 +422,7 @@ verify_security_controls
 run_node_recovery_tests
 wait_all_workload_pods_ready
 collect_platform_log_evidence
+collect_platform_stats_evidence
 
 log 'running report-only Kubescape scan'
 kubescape_raw=${RUNNER_TEMP:-$ROOT_DIR/artifacts}/kubescape-raw.json

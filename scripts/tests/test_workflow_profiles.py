@@ -168,6 +168,14 @@ class WorkflowProfileContractTests(unittest.TestCase):
                 self.assertNotIn("exec \"$source_pod\" -- wget", text)
                 self.assertNotIn("exec \"${proof_pods[0]}\" -- wget", text)
 
+    def test_compact_profiles_collect_platform_logs_and_resource_statistics(self):
+        acceptance = (ROOT / "scripts" / "acceptance-profile.sh").read_text(encoding="utf-8")
+        self.assertIn("collect_platform_log_evidence", acceptance)
+        self.assertIn("collect_platform_stats_evidence", acceptance)
+        self.assertIn("/stats-history/group-by-search", acceptance)
+        self.assertIn("zerops-runtime-statistics.json", acceptance)
+        self.assertIn("zerops-backup-storage.json", acceptance)
+
     def test_manual_jobs_are_owner_only_and_no_push_trigger_exists(self):
         for name in PROFILE_WORKFLOWS:
             data = workflow(name)
