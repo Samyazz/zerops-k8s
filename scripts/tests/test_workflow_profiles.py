@@ -179,6 +179,14 @@ class WorkflowProfileContractTests(unittest.TestCase):
         purge = workflow.index("./scripts/reconcile-profile-services.sh purge")
         self.assertLess(destroy, purge)
 
+    def test_restore_drill_uses_the_selected_profile_contract(self):
+        restore = (ROOT / "scripts" / "restore-drill.sh").read_text(encoding="utf-8")
+        self.assertIn('expected_nodes=$(printf', restore)
+        self.assertIn("profile_json '.addons.storageReplicas'", restore)
+        self.assertIn("numberOfReplicas: $storage_replicas", restore)
+        self.assertNotIn(".nodes | length >= 6", restore)
+        self.assertNotIn("numberOfReplicas: 3", restore)
+
     def test_compact_profiles_collect_platform_logs_and_resource_statistics(self):
         acceptance = (ROOT / "scripts" / "acceptance-profile.sh").read_text(encoding="utf-8")
         self.assertIn("collect_platform_log_evidence", acceptance)

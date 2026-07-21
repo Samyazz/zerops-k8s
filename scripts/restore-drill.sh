@@ -35,6 +35,8 @@ bundle=$work_dir/control-plane.tar.age
 bundle_metadata=$work_dir/control-plane.json
 bundle_plain=$work_dir/control-plane.tar.gz
 recovery_manifest=$work_dir/recovery-manifest.json
+expected_nodes=$(printf '%s\n' "${NODES[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')
+storage_replicas=$(profile_json '.addons.storageReplicas')
 list_xml=$work_dir/list.xml
 inventory=$work_dir/inventory.json
 restored_dir=$work_dir/restored-etcd
@@ -114,7 +116,8 @@ for required in \
     || die "control-plane recovery bundle is missing $required"
 done
 tar -xOzf "$bundle_plain" ./recovery-manifest.json >"$recovery_manifest"
-jq -e --arg object "$snapshot_object" '.etcdObject == $object and (.nodes | length >= 6)' \
+jq -e --arg object "$snapshot_object" --argjson expected "$expected_nodes" \
+  '.etcdObject == $object and ([.nodes[].name] as $actual | ($expected - $actual | length) == 0)' \
   "$recovery_manifest" >/dev/null || die 'recovery manifest does not describe the selected cluster snapshot'
 etcd_image=$(jq -er '.etcdImage' "$recovery_manifest")
 [[ "$etcd_image" =~ ^registry\.k8s\.io/etcd:[A-Za-z0-9._-]+$ ]] \
@@ -170,7 +173,7 @@ metadata:
 spec:
   size: "$volume_size"
   fromBackup: "$backup_url"
-  numberOfReplicas: 3
+  numberOfReplicas: $storage_replicas
   frontend: blockdev
   dataEngine: v1
 EOF
