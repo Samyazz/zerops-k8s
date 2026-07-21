@@ -168,6 +168,17 @@ class WorkflowProfileContractTests(unittest.TestCase):
                 self.assertNotIn("exec \"$source_pod\" -- wget", text)
                 self.assertNotIn("exec \"${proof_pods[0]}\" -- wget", text)
 
+    def test_distroless_etcd_encryption_probe_does_not_require_a_shell(self):
+        acceptance = (ROOT / "scripts" / "acceptance-profile.sh").read_text(encoding="utf-8")
+        self.assertIn("-- etcdctl \\\n", acceptance)
+        self.assertNotIn("-- sh -ec \\\n", acceptance)
+
+    def test_explicit_destroy_removes_all_recipe_owned_outer_services(self):
+        workflow = (ROOT / ".github" / "workflows" / "destroy.yml").read_text(encoding="utf-8")
+        destroy = workflow.index("./scripts/destroy-cluster.sh")
+        purge = workflow.index("./scripts/reconcile-profile-services.sh purge")
+        self.assertLess(destroy, purge)
+
     def test_compact_profiles_collect_platform_logs_and_resource_statistics(self):
         acceptance = (ROOT / "scripts" / "acceptance-profile.sh").read_text(encoding="utf-8")
         self.assertIn("collect_platform_log_evidence", acceptance)

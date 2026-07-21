@@ -200,8 +200,12 @@ verify_security_controls() {
   kubectl -n workloads create secret generic encryption-proof --from-literal="sentinel=$sentinel" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   raw_file=$(mktemp)
-  kubectl -n kube-system exec "etcd-${CONTROL_PLANES[0]}" -- sh -ec \
-    'ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/etc/kubernetes/pki/etcd/ca.crt --cert=/etc/kubernetes/pki/etcd/server.crt --key=/etc/kubernetes/pki/etcd/server.key get /registry/secrets/workloads/encryption-proof --print-value-only' \
+  kubectl -n kube-system exec "etcd-${CONTROL_PLANES[0]}" -- etcdctl \
+    --endpoints=https://127.0.0.1:2379 \
+    --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+    --cert=/etc/kubernetes/pki/etcd/server.crt \
+    --key=/etc/kubernetes/pki/etcd/server.key \
+    get /registry/secrets/workloads/encryption-proof --print-value-only \
     >"$raw_file"
   ! grep -aFq "$sentinel" "$raw_file" || die 'Kubernetes Secret plaintext was visible in etcd'
   rm -f "$raw_file"
