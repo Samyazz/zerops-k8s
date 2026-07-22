@@ -118,9 +118,6 @@ deploy_runtime_artifact() {
 }
 
 needs_node_artifact=false
-if [[ "$EDGE_ENABLED" == true ]] && service_selected "$EDGE_HOSTNAME"; then
-  needs_node_artifact=true
-fi
 while IFS= read -r service; do
   if service_selected "$service"; then
     needs_node_artifact=true
@@ -138,7 +135,7 @@ fi
 if [[ "$EDGE_ENABLED" == true ]] && service_selected "$EDGE_HOSTNAME"; then
   edge_setup=$(jq -er --arg hostname "$EDGE_HOSTNAME" \
     '.services[] | select(.hostname == $hostname) | .setup' "$PROFILE_FILE")
-  deploy_runtime_artifact "$EDGE_HOSTNAME" "$edge_setup"
+  deploy_with_build "$EDGE_HOSTNAME" "$edge_setup"
 fi
 
 while IFS=$'\t' read -r service setup; do

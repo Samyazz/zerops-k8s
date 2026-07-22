@@ -1,7 +1,8 @@
 #zeropsPreprocessor=on
-# Minimal disposable staging: one control plane and one worker only. Each
-# runtime builds the pinned node image locally, so no edge, S3, or other
-# recipe-owned service is required.
+# Minimal disposable staging: one control plane, one worker, and the same
+# two-instance Zerops DSR/HAProxy edge contract used by the other profiles.
+# Each node runtime builds the pinned image locally; no S3 or observability
+# service is required.
 project:
   name: zerops-k8s-staging
   corePackage: LIGHT
@@ -16,7 +17,7 @@ project:
     K8S_REPOSITORY: Samyazz/zerops-k8s
     K8S_VERSION: v1.36.2
     K8S_NODE_IMAGE: zerops-k8s-node:v1.36.2
-    K8S_CONTROL_PLANE_ENDPOINT: k8scp1.zerops:6443
+    K8S_CONTROL_PLANE_ENDPOINT: _dsr.k8sedge.zerops:6443
     K8S_POD_CIDR: 10.244.0.0/16
     K8S_SERVICE_CIDR: 10.96.0.0/16
 
@@ -56,4 +57,21 @@ services:
       maxRam: 4
       minDisk: 20
       maxDisk: 20
+      swapEnabled: false
+
+  - hostname: k8sedge
+    type: go@1.22
+    startWithoutCode: true
+    enableSubdomainAccess: true
+    minContainers: 2
+    maxContainers: 2
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 1
+      startCpuCoreCount: 1
+      minRam: 0.5
+      maxRam: 0.5
+      minDisk: 1
+      maxDisk: 1
       swapEnabled: false

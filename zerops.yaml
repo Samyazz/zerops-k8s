@@ -356,11 +356,8 @@ zerops:
   - setup: edge
     build:
       base: go@1.22
-      buildCommands:
-        - mkdir -p dist
-        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
       deployFiles:
-        - .
+        - ./edge/~
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -369,6 +366,8 @@ zerops:
           path: /healthz
     run:
       base: go@1.22
+      prepareCommands:
+        - sudo apk add --no-cache 'haproxy~3.2'
       ports:
         - port: 8080
           httpSupport: true
@@ -383,12 +382,15 @@ zerops:
           httpSupport: false
           protocol: tcp
       envVariables:
-        K8S_MODE: edge
+        K8S_DSR_HOSTNAME: _dsr.k8sedge.zerops
+        K8S_EDGE_API_BACKENDS: k8scp1:6443,k8scp2:6443,k8scp3:6443
+        K8S_EDGE_INGRESS_BACKENDS: k8sworker1:32080,k8sworker2:32080,k8sworker3:32080
+        K8S_EDGE_HEADLAMP_BACKENDS: k8sworker1:32081,k8sworker2:32081,k8sworker3:32081
       healthCheck:
         httpGet:
           port: 18082
           path: /healthz
-      start: ./dist/zerops-k8s
+      start: ./run-haproxy.sh
 
   # Compact-production nodes retain the S3-backed image cache and recovery
   # storage, but deliberately carry no references to the full observability
@@ -506,11 +508,8 @@ zerops:
   - setup: edge-production
     build:
       base: go@1.22
-      buildCommands:
-        - mkdir -p dist
-        - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/zerops-k8s ./cmd/zerops-k8s
       deployFiles:
-        - .
+        - ./edge/~
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -519,6 +518,8 @@ zerops:
           path: /healthz
     run:
       base: go@1.22
+      prepareCommands:
+        - sudo apk add --no-cache 'haproxy~3.2'
       ports:
         - port: 8080
           httpSupport: true
@@ -530,7 +531,7 @@ zerops:
           httpSupport: false
           protocol: tcp
       envVariables:
-        K8S_MODE: edge
+        K8S_DSR_HOSTNAME: _dsr.k8sedge.zerops
         K8S_EDGE_API_BACKENDS: k8scp1:6443
         K8S_EDGE_INGRESS_BACKENDS: k8sworker1:32080,k8sworker2:32080
         K8S_EDGE_HEADLAMP_ENABLED: "false"
@@ -538,7 +539,7 @@ zerops:
         httpGet:
           port: 18082
           path: /healthz
-      start: ./dist/zerops-k8s
+      start: ./run-haproxy.sh
 
   # Staging builds the pinned Docker image independently in each runtime. It
   # verifies both the resulting immutable image ID and kubeadm version before
@@ -618,6 +619,42 @@ zerops:
         K8S_NODE_NAME: k8sworker1
       healthCheck: *stagingNodeHealth
       start: ./dist/zerops-k8s
+
+  - setup: edge-staging
+    build:
+      base: go@1.22
+      deployFiles:
+        - ./edge/~
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 18082
+          path: /healthz
+    run:
+      base: go@1.22
+      prepareCommands:
+        - sudo apk add --no-cache 'haproxy~3.2'
+      ports:
+        - port: 8080
+          httpSupport: true
+          protocol: tcp
+        - port: 6443
+          httpSupport: false
+          protocol: tcp
+        - port: 18082
+          httpSupport: false
+          protocol: tcp
+      envVariables:
+        K8S_DSR_HOSTNAME: _dsr.k8sedge.zerops
+        K8S_EDGE_API_BACKENDS: k8scp1:6443
+        K8S_EDGE_INGRESS_BACKENDS: k8sworker1:32080
+        K8S_EDGE_HEADLAMP_ENABLED: "false"
+      healthCheck:
+        httpGet:
+          port: 18082
+          path: /healthz
+      start: ./run-haproxy.sh
 
   # These two setups customize Zerops' first-class Prometheus/Grafana recipe.
   # They stay outside Kubernetes; the cluster only ships telemetry to them.

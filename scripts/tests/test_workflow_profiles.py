@@ -1088,7 +1088,11 @@ class WorkflowProfileContractTests(unittest.TestCase):
                 self.assertNotIn("text-secret-object-value", rejected.stderr)
 
     def test_no_cleanup_trap_handles_exit_and_signals_with_one_handler(self):
-        for path in [*ROOT.glob("scripts/*.sh"), *WORKFLOW_DIR.glob("*.yml")]:
+        for path in [
+            *ROOT.glob("scripts/*.sh"),
+            *ROOT.glob("edge/*.sh"),
+            *WORKFLOW_DIR.glob("*.yml"),
+        ]:
             text = path.read_text(encoding="utf-8")
             with self.subTest(path=path.relative_to(ROOT)):
                 self.assertNotRegex(

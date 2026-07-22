@@ -9,11 +9,11 @@
     "controlPlanes": ["k8scp1"],
     "workers": ["k8sworker1"],
     "optionalWorkers": [],
-    "controlPlaneEndpoint": "k8scp1.zerops:6443",
+    "controlPlaneEndpoint": "_dsr.k8sedge.zerops:6443",
     "edge": {
-      "enabled": false,
-      "hostname": null,
-      "containers": 0
+      "enabled": true,
+      "hostname": "k8sedge",
+      "containers": 2
     },
     "backup": {
       "enabled": false,
@@ -51,6 +51,7 @@
   },
   "services": [
     {"hostname": "k8scp1", "type": "docker@26.1.5", "setup": "controlplane1-staging", "minContainers": 1, "maxContainers": 1, "resources": {"cpuMode": "SHARED", "cpu": 2, "ramGb": 4, "diskGb": 20}},
-    {"hostname": "k8sworker1", "type": "docker@26.1.5", "setup": "worker1-staging", "minContainers": 1, "maxContainers": 1, "resources": {"cpuMode": "SHARED", "cpu": 2, "ramGb": 4, "diskGb": 20}}
+    {"hostname": "k8sworker1", "type": "docker@26.1.5", "setup": "worker1-staging", "minContainers": 1, "maxContainers": 1, "resources": {"cpuMode": "SHARED", "cpu": 2, "ramGb": 4, "diskGb": 20}},
+    {"hostname": "k8sedge", "type": "go@1.22", "setup": "edge-staging", "minContainers": 2, "maxContainers": 2, "resources": {"cpuMode": "SHARED", "minCpu": 1, "maxCpu": 1, "minRamGb": 0.5, "maxRamGb": 0.5, "minDiskGb": 1, "maxDiskGb": 1}}
   ]
 }

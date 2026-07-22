@@ -371,6 +371,7 @@ expected_control_planes=${#CONTROL_PLANES[@]}
 expected_workers=${#WORKERS[@]}
 expected_nodes=${#NODES[@]}
 log "checking the resolved ${expected_control_planes}+${expected_workers} topology"
+"$ROOT_DIR/scripts/verify-dsr-api.sh" "$artifact_dir/dsr-api-certificate.txt"
 kubectl get nodes -o wide | tee "$artifact_dir/nodes.txt"
 [[ $(kubectl get nodes -o json | jq '[.items[] | select(any(.status.conditions[]; .type=="Ready" and .status=="True"))] | length') -eq "$expected_nodes" ]]
 [[ $(kubectl get nodes -l node-role.kubernetes.io/control-plane -o name | wc -l) -eq "$expected_control_planes" ]]
@@ -452,7 +453,7 @@ else
       and .spec.limits[0].default == {"cpu":"250m","memory":"128Mi"}' >/dev/null
   kubectl -n workloads get resourcequota/workload-budget limitrange/workload-defaults \
     -o yaml >"$artifact_dir/workload-controls.yaml"
-  http_probe "http://${WORKERS[0]}.zerops:32080/healthz" | tee "$artifact_dir/ingress.txt"
+  http_probe "http://${EDGE_HOSTNAME}:8080/healthz" | tee "$artifact_dir/ingress.txt"
 fi
 wait_metrics_api
 

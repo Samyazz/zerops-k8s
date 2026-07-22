@@ -13,8 +13,7 @@ Start every investigation by confirming the workflow's selected `profile` matche
 
 Use the correct VPN-only endpoint:
 
-- `full` / `production`: `https://k8sedge.zerops:6443`; first check `http://k8sedge.zerops:18082/healthz`.
-- `staging`: `https://k8scp1.zerops:6443`; there is no edge health endpoint.
+- Every profile: `https://_dsr.k8sedge.zerops:6443`; first check `http://k8sedge.zerops:18082/healthz`, then inspect HAProxy logs and backend state on both edge containers.
 
 The workflows connect with `zcli vpn up --mtu 1280`. If small responses work but kubeconfig or larger transfers stall, reconnect with the same MTU. Never disable TLS verification for routine access.
 
@@ -22,8 +21,7 @@ An unavailable sole control plane is an expected API outage in `production` and 
 
 ## Application ingress is unavailable
 
-- `full` / `production`: test `http://k8sedge.zerops:8080`, Gateway/HTTPRoute status, then worker NodePort `32080` from the private network.
-- `staging`: test `http://k8sworker1.zerops:32080`; there is no `k8sedge` service.
+- Every profile: test `http://k8sedge.zerops:8080`, Gateway/HTTPRoute status, then worker NodePort `32080` from the private network.
 
 `full` uses Istio; inspect its Gateway data plane and ambient components. `production` and `staging` use Traefik and must not have Istio resources. All profiles leave public routing disabled by default.
 

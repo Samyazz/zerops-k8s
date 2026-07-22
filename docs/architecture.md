@@ -8,16 +8,16 @@ Zerops is the infrastructure layer and Kubernetes is a nested control plane. Eac
 |---|---|---|---|
 | Control planes / stacked etcd | 3 | 1 | 1 |
 | Workers | 3, optionally 4 | 2, optionally 3 | 1 fixed |
-| Outer edge | 2 `k8sedge` containers | 2 `k8sedge` containers | None |
+| Outer edge | Zerops DSR + 2 HAProxy `k8sedge` containers | Zerops DSR + 2 HAProxy `k8sedge` containers | Zerops DSR + 2 HAProxy `k8sedge` containers |
 | Ingress | Istio Gateway API | Traefik Gateway API, 2 replicas | Traefik Gateway API, 1 replica |
 | Storage | Longhorn, 3 replicas | Longhorn, 2 replicas | No dynamic storage layer |
 | Backup target | Zerops `k8sbackups` | Zerops `k8sbackups` | None |
 | Dashboard | Headlamp | None | None |
 | Dedicated observability | Prometheus/Grafana and ELK/APM outer services; Alloy, Fluent Bit and exporters in-cluster | None | None |
 
-The `full` edge exposes private TCP paths on `6443` for the Kubernetes API, `8080` for application ingress through worker NodePort `32080`, and `18081` for Headlamp through worker NodePort `32081`. `production` uses `6443` and `8080` but omits Headlamp. Both expose edge readiness on `18082`. `staging` has no edge: its kubeconfig targets `k8scp1.zerops:6443`, and ingress is reached directly at `k8sworker1.zerops:32080` over the Zerops VPN.
+Every profile exposes the Kubernetes API through the Zerops-owned `_dsr.k8sedge.zerops:6443` service address. Zerops distributes those connections across two edge containers, and HAProxy on each container forwards only to kube-apiserver backends that pass an HTTPS `/readyz` check. All profiles also proxy application ingress on `8080` to worker NodePort `32080`; `full` alone adds Headlamp on `18081` to worker NodePort `32081`. Edge readiness is available on `18082`.
 
-The API certificate includes the selected profile's control-plane endpoint. API Secrets are encrypted with the key generated and stored as a Zerops secret. kubeadm identity and cluster ownership remain profile-scoped so one repository cannot operate two nested clusters concurrently in the project.
+The API certificate includes `_dsr.k8sedge.zerops` exactly. Because kubeadm rejects underscores under its RFC-1123 validation, kubeadm receives `k8sedge.zerops` as its internal control-plane endpoint and the node agent atomically extends the generated serving certificate with the Zerops DSR SAN before clients receive a kubeconfig. This reconciliation repeats after control-plane upgrades. API Secrets are encrypted with the key generated and stored as a Zerops secret. kubeadm identity and cluster ownership remain profile-scoped so one repository cannot operate two nested clusters concurrently in the project.
 
 ## Networking and ingress
 

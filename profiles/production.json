@@ -9,7 +9,7 @@
     "controlPlanes": ["k8scp1"],
     "workers": ["k8sworker1", "k8sworker2"],
     "optionalWorkers": ["k8sworker3"],
-    "controlPlaneEndpoint": "k8sedge.zerops:6443",
+    "controlPlaneEndpoint": "_dsr.k8sedge.zerops:6443",
     "edge": {
       "enabled": true,
       "hostname": "k8sedge",

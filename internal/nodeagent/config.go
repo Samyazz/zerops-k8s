@@ -25,6 +25,16 @@ type config struct {
 }
 
 func loadConfig() (config, error) {
+	controlPlaneEndpoint := env("K8S_CONTROL_PLANE_ENDPOINT", "_dsr.k8sedge.zerops:6443")
+	// kubeadm validates controlPlaneEndpoint as RFC-1123 and therefore rejects
+	// Zerops' reserved _dsr label. Cluster clients still use the DSR hostname;
+	// kubeadm uses the ordinary service name and the serving certificate is
+	// extended with the exact DSR SAN after kubeadm creates it.
+	if controlPlaneEndpoint == "k8sedge:6443" ||
+		controlPlaneEndpoint == "k8sedge.zerops:6443" ||
+		controlPlaneEndpoint == "_dsr.k8sedge.zerops:6443" {
+		controlPlaneEndpoint = "k8sedge.zerops:6443"
+	}
 	cfg := config{
 		Listen:               env("K8S_AGENT_LISTEN", ":18080"),
 		Token:                os.Getenv("K8S_AGENT_TOKEN"),
@@ -33,16 +43,13 @@ func loadConfig() (config, error) {
 		NodeImage:            env("K8S_NODE_IMAGE", "zerops-k8s-node:v1.36.2"),
 		ContainerName:        "zerops-k8s-node",
 		StateDir:             filepath.Clean(env("K8S_STATE_DIR", "/var/lib/zerops-k8s")),
-		ControlPlaneEndpoint: env("K8S_CONTROL_PLANE_ENDPOINT", "k8sedge.zerops:6443"),
+		ControlPlaneEndpoint: controlPlaneEndpoint,
 		PodCIDR:              env("K8S_POD_CIDR", "10.244.0.0/16"),
 		ServiceCIDR:          env("K8S_SERVICE_CIDR", "10.96.0.0/16"),
 		KubernetesVersion:    env("K8S_VERSION", "v1.36.2"),
 		BootstrapToken:       os.Getenv("K8S_BOOTSTRAP_TOKEN"),
 		CertificateKey:       os.Getenv("K8S_CERTIFICATE_KEY"),
 		EncryptionKey:        os.Getenv("K8S_ENCRYPTION_KEY"),
-	}
-	if cfg.ControlPlaneEndpoint == "k8sedge:6443" {
-		cfg.ControlPlaneEndpoint = "k8sedge.zerops:6443"
 	}
 	if cfg.Token == "" {
 		return cfg, fmt.Errorf("K8S_AGENT_TOKEN is required")

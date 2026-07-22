@@ -420,6 +420,10 @@ func (a *agent) initCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.isJoined(r.Context()) {
+		if _, err := a.ensureAPIServerDSRSAN(r.Context()); err != nil {
+			writeError(w, err)
+			return
+		}
 		hash, err := a.caHash(r.Context())
 		if err != nil {
 			writeError(w, err)
@@ -453,6 +457,10 @@ func (a *agent) initCluster(w http.ResponseWriter, r *http.Request) {
 		"--config", "/etc/kubernetes/zerops-init.yaml",
 		"--upload-certs", "--ignore-preflight-errors=SystemVerification",
 	}, ""); err != nil {
+		writeError(w, err)
+		return
+	}
+	if _, err := a.ensureAPIServerDSRSAN(r.Context()); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -491,6 +499,10 @@ func (a *agent) joinCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.isJoined(r.Context()) {
+		if _, err := a.ensureAPIServerDSRSAN(r.Context()); err != nil {
+			writeError(w, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, response{Status: "already-joined"})
 		return
 	}
@@ -521,6 +533,10 @@ func (a *agent) joinCluster(w http.ResponseWriter, r *http.Request) {
 		"--config", "/etc/kubernetes/zerops-join.yaml",
 		"--ignore-preflight-errors=SystemVerification",
 	}, ""); err != nil {
+		writeError(w, err)
+		return
+	}
+	if _, err := a.ensureAPIServerDSRSAN(r.Context()); err != nil {
 		writeError(w, err)
 		return
 	}

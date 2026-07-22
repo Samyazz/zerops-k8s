@@ -13,7 +13,7 @@ EXPECTED = {
     "full": {
         "control_planes": ["k8scp1", "k8scp2", "k8scp3"],
         "workers": ["k8sworker1", "k8sworker2", "k8sworker3"],
-        "endpoint": "k8sedge.zerops:6443",
+        "endpoint": "_dsr.k8sedge.zerops:6443",
         "services": [
             "k8scp1", "k8scp2", "k8scp3", "k8sworker1", "k8sworker2",
             "k8sworker3", "k8sedge", "k8sbackups", "grafanadb",
@@ -28,7 +28,7 @@ EXPECTED = {
     "production": {
         "control_planes": ["k8scp1"],
         "workers": ["k8sworker1", "k8sworker2"],
-        "endpoint": "k8sedge.zerops:6443",
+        "endpoint": "_dsr.k8sedge.zerops:6443",
         "services": ["k8scp1", "k8sworker1", "k8sworker2", "k8sedge", "k8sbackups"],
         "gateway": "traefik",
         "storage": "longhorn",
@@ -38,8 +38,8 @@ EXPECTED = {
     "staging": {
         "control_planes": ["k8scp1"],
         "workers": ["k8sworker1"],
-        "endpoint": "k8scp1.zerops:6443",
-        "services": ["k8scp1", "k8sworker1"],
+        "endpoint": "_dsr.k8sedge.zerops:6443",
+        "services": ["k8scp1", "k8sworker1", "k8sedge"],
         "gateway": "traefik",
         "storage": "none",
         "storage_replicas": 0,
@@ -318,21 +318,43 @@ class ProfileContractTests(unittest.TestCase):
                 self.assertIn(setup, setup_blocks)
                 self.assertIn(f"K8S_NODE_NAME: {worker}", setup_blocks[setup])
 
-    def test_staging_has_no_orbiting_service_or_s3_reference(self):
+    def test_staging_keeps_only_the_required_edge_and_no_s3_reference(self):
         profile = load_profile("staging")
-        self.assertFalse(profile["topology"]["edge"]["enabled"])
+        self.assertTrue(profile["topology"]["edge"]["enabled"])
+        self.assertEqual(profile["topology"]["edge"]["containers"], 2)
         self.assertFalse(profile["topology"]["backup"]["enabled"])
         self.assertEqual(profile["nodeImage"]["mode"], "local")
         import_text = import_path("staging").read_text(encoding="utf-8")
         setup_text = (ROOT / "zerops.yaml").read_text(encoding="utf-8")
         setup_blocks = blocks(setup_text, "setup")
-        selected = "\n".join(setup_blocks[name] for name in ("controlplane1-staging", "worker1-staging"))
+        selected = "\n".join(
+            setup_blocks[name]
+            for name in ("controlplane1-staging", "worker1-staging", "edge-staging")
+        )
         for forbidden in ("k8sbackups_", "s3-fetch", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
             self.assertNotIn(forbidden, import_text)
             self.assertNotIn(forbidden, selected)
         self.assertIn("docker build --pull", selected)
         self.assertIn("docker image inspect --format '{{.Id}}'", selected)
         self.assertIn('test "$image_version" = "$K8S_VERSION"', selected)
+
+    def test_every_profile_uses_redundant_dsr_haproxy_edge(self):
+        setup_blocks = blocks((ROOT / "zerops.yaml").read_text(encoding="utf-8"), "setup")
+        for name in EXPECTED:
+            with self.subTest(profile=name):
+                profile = load_profile(name)
+                edge = profile["topology"]["edge"]
+                self.assertTrue(edge["enabled"])
+                self.assertEqual(edge["hostname"], "k8sedge")
+                self.assertEqual(edge["containers"], 2)
+                self.assertEqual(profile["topology"]["controlPlaneEndpoint"], "_dsr.k8sedge.zerops:6443")
+                service = next(item for item in profile["services"] if item["hostname"] == "k8sedge")
+                block = setup_blocks[service["setup"]]
+                self.assertIn("sudo apk add --no-cache 'haproxy~3.2'", block)
+                self.assertIn("K8S_DSR_HOSTNAME: _dsr.k8sedge.zerops", block)
+                self.assertIn("start: ./run-haproxy.sh", block)
+                self.assertNotIn("K8S_MODE: edge", block)
+                self.assertNotIn("go build", block)
 
     def test_lib_defaults_to_full_and_preserves_node_order(self):
         command = (
@@ -346,7 +368,7 @@ class ProfileContractTests(unittest.TestCase):
         )
         self.assertEqual(
             result.stdout.strip(),
-            "full|k8scp1 k8scp2 k8scp3|k8sworker1 k8sworker2 k8sworker3|k8sedge.zerops:6443",
+            "full|k8scp1 k8scp2 k8scp3|k8sworker1 k8sworker2 k8sworker3|_dsr.k8sedge.zerops:6443",
         )
 
     def test_lib_resolves_all_profile_node_orders(self):

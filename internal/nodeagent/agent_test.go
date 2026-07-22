@@ -90,8 +90,13 @@ func TestInitConfigUsesHostWithoutPortForCertificateSAN(t *testing.T) {
 	if strings.Contains(config, "    - k8sedge.zerops:6443") {
 		t.Fatal("certificate SAN must not contain a port")
 	}
-	if !strings.Contains(config, "    - k8sedge\n") {
-		t.Fatal("certificate SAN is missing the endpoint hostname")
+	for _, san := range []string{"k8sedge", "k8sedge.zerops", "10.0.0.1"} {
+		if !strings.Contains(config, "    - "+san+"\n") {
+			t.Fatalf("certificate SAN is missing %s", san)
+		}
+	}
+	if strings.Contains(config, "_dsr.k8sedge.zerops") {
+		t.Fatal("kubeadm config must not contain the RFC-1123-invalid DSR label")
 	}
 	if !strings.Contains(config, "kind: KubeletConfiguration\nresolvConf: /etc/kubernetes/resolv.conf\n") {
 		t.Fatal("kubelet resolver configuration is missing")
@@ -122,6 +127,19 @@ func TestLoadConfigMigratesLegacyControlPlaneEndpoint(t *testing.T) {
 	}
 	if cfg.ControlPlaneEndpoint != "k8sedge.zerops:6443" {
 		t.Fatalf("control-plane endpoint = %q", cfg.ControlPlaneEndpoint)
+	}
+}
+
+func TestLoadConfigUsesRFC1123KubeadmEndpointForDSRClients(t *testing.T) {
+	t.Setenv("K8S_AGENT_TOKEN", "test-token")
+	t.Setenv("K8S_NODE_NAME", "k8scp1")
+	t.Setenv("K8S_CONTROL_PLANE_ENDPOINT", "_dsr.k8sedge.zerops:6443")
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ControlPlaneEndpoint != "k8sedge.zerops:6443" {
+		t.Fatalf("kubeadm endpoint = %q", cfg.ControlPlaneEndpoint)
 	}
 }
 

@@ -36,7 +36,7 @@ trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-shellcheck "$ROOT_DIR"/scripts/*.sh
+shellcheck "$ROOT_DIR"/scripts/*.sh "$ROOT_DIR"/edge/*.sh
 (cd "$ROOT_DIR" && go test ./... && go vet ./...)
 "$ROOT_DIR/scripts/validate-recipe.sh" "$K8S_PROFILE"
 project_state=$(cluster_tag_value state)

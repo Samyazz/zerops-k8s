@@ -8,9 +8,9 @@ The repository publishes three alternative Zerops project imports. They are not 
 |---|---|---|
 | `full` | [`import.yaml`](../import.yaml) | `k8scp1`–`k8scp3`, `k8sworker1`–`k8sworker3`, `k8sedge`, `k8sbackups`, `grafanadb`, `prometheusbackups`, `grafana`, `prometheus`, `elkstorage`, `kibana`, `logstash`, `apmserver` |
 | `production` | [`import.production.yaml`](../import.production.yaml) | `k8scp1`, `k8sworker1`, `k8sworker2`, `k8sedge`, `k8sbackups` |
-| `staging` | [`import.staging.yaml`](../import.staging.yaml) | `k8scp1`, `k8sworker1` |
+| `staging` | [`import.staging.yaml`](../import.staging.yaml) | `k8scp1`, `k8sworker1`, `k8sedge` |
 
-Zerops project-core services and a pre-existing `zcp` service are not recipe-owned inventory and are preserved. `production` is compact production, not an HA control plane. `staging` is disposable and intentionally has neither an edge runtime nor object storage.
+Zerops project-core services and a pre-existing `zcp` service are not recipe-owned inventory and are preserved. `production` is compact production, not an HA control plane. `staging` is disposable and intentionally has no object storage; its only non-node runtime is the required redundant DSR/HAProxy edge.
 
 The machine-readable descriptors in [`profiles/`](../profiles/) are the source of truth for topology, endpoint, resource, feature, capability, and acceptance contracts. `K8S_PROFILE=full` is assumed when the variable is absent.
 
@@ -73,9 +73,9 @@ All listed endpoints are private and require an active Zerops VPN unless an oper
 
 | Endpoint | Full | Compact production | Minimal staging |
 |---|---|---|---|
-| Kubernetes API | `https://k8sedge.zerops:6443` | `https://k8sedge.zerops:6443` | `https://k8scp1.zerops:6443` |
-| Demo/application ingress | `http://k8sedge.zerops:8080` | `http://k8sedge.zerops:8080` | `http://k8sworker1.zerops:32080` |
-| Edge readiness | `http://k8sedge.zerops:18082/healthz` | `http://k8sedge.zerops:18082/healthz` | Not applicable |
+| Kubernetes API | `https://_dsr.k8sedge.zerops:6443` | `https://_dsr.k8sedge.zerops:6443` | `https://_dsr.k8sedge.zerops:6443` |
+| Demo/application ingress | `http://k8sedge.zerops:8080` | `http://k8sedge.zerops:8080` | `http://k8sedge.zerops:8080` |
+| Edge readiness | `http://k8sedge.zerops:18082/healthz` | `http://k8sedge.zerops:18082/healthz` | `http://k8sedge.zerops:18082/healthz` |
 | Headlamp | `http://k8sedge.zerops:18081` | Not installed | Not installed |
 | Node lifecycle agent | `http://NODE.zerops:18080/healthz` | `http://NODE.zerops:18080/healthz` | `http://NODE.zerops:18080/healthz` |
 | Grafana/Kibana | Zerops-assigned service subdomains | Not installed | Not installed |

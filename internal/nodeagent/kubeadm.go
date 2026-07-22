@@ -98,6 +98,7 @@ func (a *agent) initConfig(ip string) string {
 	if host, _, err := net.SplitHostPort(a.cfg.ControlPlaneEndpoint); err == nil {
 		endpointSAN = host
 	}
+	certSANs := apiServerCertSANs(endpointSAN, ip)
 	return fmt.Sprintf(`apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 bootstrapTokens:
@@ -125,10 +126,7 @@ networking:
   serviceSubnet: %s
 apiServer:
   certSANs:
-    - k8sedge
-    - k8sedge.zerops
-    - %s
-    - %s
+%s
   extraArgs:
     - name: audit-policy-file
       value: /etc/kubernetes/audit-policy.yaml
@@ -183,7 +181,25 @@ etcd:
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
 resolvConf: /etc/kubernetes/resolv.conf
-`, a.cfg.BootstrapToken, a.cfg.NodeName, ip, ip, a.cfg.CertificateKey, a.cfg.KubernetesVersion, a.cfg.ControlPlaneEndpoint, a.cfg.PodCIDR, a.cfg.ServiceCIDR, endpointSAN, ip)
+`, a.cfg.BootstrapToken, a.cfg.NodeName, ip, ip, a.cfg.CertificateKey, a.cfg.KubernetesVersion, a.cfg.ControlPlaneEndpoint, a.cfg.PodCIDR, a.cfg.ServiceCIDR, certSANs)
+}
+
+func apiServerCertSANs(endpointSAN, ip string) string {
+	seen := make(map[string]bool)
+	var lines strings.Builder
+	for _, san := range []string{
+		"k8sedge",
+		"k8sedge.zerops",
+		endpointSAN,
+		ip,
+	} {
+		if san == "" || seen[san] {
+			continue
+		}
+		seen[san] = true
+		fmt.Fprintf(&lines, "    - %s\n", san)
+	}
+	return strings.TrimSuffix(lines.String(), "\n")
 }
 
 func (a *agent) joinConfig(ip, caHash string) string {

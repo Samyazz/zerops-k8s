@@ -6,7 +6,7 @@ This repository is a publishable Zerops recipe and owner-triggered GitHub Action
 |---|---|---|---|
 | `full` | 3 control planes, 3 workers, redundant edge, backup storage, Grafana/Prometheus and ELK/APM services | Calico, Istio ambient, Gateway API, Longhorn, cert-manager, Headlamp, metrics and telemetry collectors | Proper production demonstration with HA control plane and the complete operational stack |
 | `production` | 1 control plane, 2 workers, redundant edge, backup storage | Calico, Traefik Gateway API, Longhorn and metrics-server | Compact production with redundant workers and Zerops platform observability only |
-| `staging` | 1 control plane and 1 worker | Calico, Traefik Gateway API and metrics-server | Minimal, disposable stage with no recipe-owned orbiting services |
+| `staging` | 1 control plane, 1 worker, redundant DSR/HAProxy edge | Calico, Traefik Gateway API and metrics-server | Minimal, disposable stage with no storage or observability service |
 
 All profiles use the pinned Kubernetes and add-on versions in [`versions.env`](versions.env), encrypted Kubernetes Secrets, audit logging, Pod Security Admission, least-privilege RBAC, NetworkPolicy defaults, resource-bounded demonstration workloads, and Kubescape reporting.
 
@@ -64,7 +64,7 @@ published imports remain pinned to the full commit SHA. Paste one raw file into
 profile-aware deployment workflow; do not paste a second profile import over a
 running cluster. See [profile and publishing details](docs/profiles.md).
 
-[`zerops.yaml`](zerops.yaml) defines the shared node and edge build/run setups. The public imports contain no cluster credential values; the deployment workflow generates them locally and stores them as sensitive Zerops project secrets before any node code is deployed.
+[`zerops.yaml`](zerops.yaml) defines the shared node and HAProxy edge build/run setups. Zerops supplies `_dsr.k8sedge.zerops` as the stable service address and distributes connections over two edge containers in every profile. HAProxy then selects only healthy kube-apiserver backends using native TLS `/readyz` checks. The public imports contain no cluster credential values; the deployment workflow generates them locally and stores them as sensitive Zerops project secrets before any node code is deployed.
 
 ## Access
 
@@ -72,14 +72,16 @@ Connect the Zerops VPN before using private cluster endpoints.
 
 | Surface | `full` | `production` | `staging` |
 |---|---|---|---|
-| Kubernetes API | `https://k8sedge.zerops:6443` | `https://k8sedge.zerops:6443` | `https://k8scp1.zerops:6443` |
-| Application ingress | `http://k8sedge.zerops:8080` | `http://k8sedge.zerops:8080` | `http://k8sworker1.zerops:32080` |
-| Edge health | `http://k8sedge.zerops:18082/healthz` | `http://k8sedge.zerops:18082/healthz` | Not installed |
+| Kubernetes API | `https://_dsr.k8sedge.zerops:6443` | `https://_dsr.k8sedge.zerops:6443` | `https://_dsr.k8sedge.zerops:6443` |
+| Application ingress | `http://k8sedge.zerops:8080` | `http://k8sedge.zerops:8080` | `http://k8sedge.zerops:8080` |
+| Edge health | `http://k8sedge.zerops:18082/healthz` | `http://k8sedge.zerops:18082/healthz` | `http://k8sedge.zerops:18082/healthz` |
 | Headlamp | `http://k8sedge.zerops:18081` | Not installed | Not installed |
 | Grafana/Kibana | Their Zerops service pages and enabled subdomains | Not installed | Not installed |
-| Platform logs/statistics | Zerops service detail for every outer runtime | Zerops service detail for all four runtimes and backup storage health/quota | Zerops service detail for both node runtimes |
+| Platform logs/statistics | Zerops service detail for every outer runtime | Zerops service detail for all four runtimes and backup storage health/quota | Zerops service detail for both nodes and the edge runtime |
 
 The API and Headlamp are VPN-only. Public application routing is deliberately not enabled by the recipe. Retrieve the admin kubeconfig and, for `full`, role-specific Headlamp tokens from sensitive Zerops project variables for the current successful GitHub run. Never put them in repository files or Action artifacts.
+
+The `_dsr` label is a Zerops-reserved private DNS name. kubeadm applies RFC-1123 validation and cannot accept that label directly in `controlPlaneEndpoint` or `apiServer.certSANs`; the node agent therefore gives kubeadm the ordinary `k8sedge.zerops` service name and atomically extends each generated kube-apiserver certificate with the exact `_dsr.k8sedge.zerops` SAN. Go TLS clients, including `kubectl`, support exact private hostnames containing underscores, so the generated kubeconfig needs no `tls-server-name` override.
 
 ## License
 

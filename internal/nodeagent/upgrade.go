@@ -193,6 +193,12 @@ func (a *agent) upgradeCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("run kubeadm upgrade on %s: %w", a.cfg.NodeName, err))
 		return
 	}
+	if a.cfg.Role == "control-plane" {
+		if _, err := a.ensureAPIServerDSRSAN(ctx); err != nil {
+			writeError(w, fmt.Errorf("restore DSR API certificate SAN after upgrade: %w", err))
+			return
+		}
+	}
 	for _, packageName := range []string{"kubelet", "kubectl"} {
 		if err := a.installKubernetesPackage(ctx, packageName, request.PackageVersion, target.minor); err != nil {
 			writeError(w, err)
