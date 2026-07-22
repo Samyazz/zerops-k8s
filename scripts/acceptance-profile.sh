@@ -62,6 +62,11 @@ wait_metrics_api() {
   kubectl -n workloads top pods >"$artifact_dir/workload-metrics.txt"
 }
 
+http_probe() {
+  curl --fail --silent --show-error --connect-timeout 3 --max-time 15 \
+    --retry 2 --retry-delay 1 --retry-all-errors "$@"
+}
+
 assert_absent_namespace() {
   local namespace=$1
   if kubectl get namespace "$namespace" >/dev/null 2>&1; then
@@ -108,7 +113,7 @@ collect_platform_log_evidence() {
     agent_request "$service" GET /v1/state >/dev/null
   done
   if [[ "$EDGE_ENABLED" == true ]]; then
-    curl --fail --silent "http://${EDGE_HOSTNAME}:8080/healthz" >/dev/null
+    http_probe "http://${EDGE_HOSTNAME}:8080/healthz" >/dev/null
   fi
 
   while read -r service; do
@@ -267,7 +272,7 @@ run_node_recovery_tests() {
     wait_node_unready "$victim"
     deadline=$((SECONDS + 900))
     until [[ $(kubectl -n workloads get deployment demo -o jsonpath='{.status.availableReplicas}') -ge 1 ]] \
-      && curl --fail --silent "http://${EDGE_HOSTNAME}:8080/healthz" >/dev/null; do
+      && http_probe "http://${EDGE_HOSTNAME}:8080/healthz" >/dev/null; do
       (( SECONDS < deadline )) || die 'demo ingress was unavailable after a compact-production worker failure'
       sleep 5
     done
@@ -366,7 +371,7 @@ if [[ "$K8S_PROFILE" == production ]]; then
   [[ $(kubectl -n workloads get pods -l app=demo -o json | jq '[.items[].spec.nodeName] | unique | length') -eq 2 ]]
   kubectl -n workloads get poddisruptionbudget/demo horizontalpodautoscaler/demo resourcequota/workload-budget limitrange/workload-defaults \
     -o yaml >"$artifact_dir/workload-controls.yaml"
-  curl --fail --silent "http://${EDGE_HOSTNAME}:8080/healthz" | tee "$artifact_dir/ingress.txt"
+  http_probe "http://${EDGE_HOSTNAME}:8080/healthz" | tee "$artifact_dir/ingress.txt"
 else
   [[ $(kubectl -n workloads get deployment demo -o jsonpath='{.spec.replicas}') -eq 1 ]]
   if kubectl -n workloads get poddisruptionbudget/demo >/dev/null 2>&1; then
@@ -377,7 +382,7 @@ else
   fi
   kubectl -n workloads get resourcequota/workload-budget limitrange/workload-defaults \
     -o yaml >"$artifact_dir/workload-controls.yaml"
-  curl --fail --silent "http://${WORKERS[0]}.zerops:32080/healthz" | tee "$artifact_dir/ingress.txt"
+  http_probe "http://${WORKERS[0]}.zerops:32080/healthz" | tee "$artifact_dir/ingress.txt"
 fi
 wait_metrics_api
 

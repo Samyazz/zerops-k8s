@@ -90,7 +90,7 @@ func configuredProxies() ([]*proxy, error) {
 	}
 	routes := []route{
 		{name: "kubernetes-api", enabledKey: "K8S_EDGE_API_ENABLED", listenerKey: "K8S_EDGE_API_LISTEN", listenerFallback: ":6443", backendsKey: "K8S_EDGE_API_BACKENDS", backendsFallback: "k8scp1:6443,k8scp2:6443,k8scp3:6443", healthScheme: "https", healthPath: "/readyz"},
-		{name: "application-ingress", enabledKey: "K8S_EDGE_INGRESS_ENABLED", listenerKey: "K8S_EDGE_INGRESS_LISTEN", listenerFallback: ":8080", backendsKey: "K8S_EDGE_INGRESS_BACKENDS", backendsFallback: "k8sworker1:32080,k8sworker2:32080,k8sworker3:32080"},
+		{name: "application-ingress", enabledKey: "K8S_EDGE_INGRESS_ENABLED", listenerKey: "K8S_EDGE_INGRESS_LISTEN", listenerFallback: ":8080", backendsKey: "K8S_EDGE_INGRESS_BACKENDS", backendsFallback: "k8sworker1:32080,k8sworker2:32080,k8sworker3:32080", healthScheme: "http", healthPath: "/healthz"},
 		{name: "headlamp", enabledKey: "K8S_EDGE_HEADLAMP_ENABLED", listenerKey: "K8S_EDGE_HEADLAMP_LISTEN", listenerFallback: ":18081", backendsKey: "K8S_EDGE_HEADLAMP_BACKENDS", backendsFallback: "k8sworker1:32081,k8sworker2:32081,k8sworker3:32081"},
 	}
 

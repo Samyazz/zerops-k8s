@@ -77,6 +77,44 @@ func TestDialFailsOverToNextBackend(t *testing.T) {
 	_ = conn.Close()
 }
 
+func TestIngressDialSkipsTCPReachableButHTTPUnhealthyBackend(t *testing.T) {
+	unhealthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer unhealthy.Close()
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok\n"))
+	}))
+	defer healthy.Close()
+
+	p := proxy{
+		name:         "application-ingress",
+		backends:     []string{strings.TrimPrefix(unhealthy.URL, "http://"), strings.TrimPrefix(healthy.URL, "http://")},
+		healthScheme: "http",
+		healthPath:   "/healthz",
+	}
+	conn, err := p.dial()
+	if err != nil {
+		t.Fatalf("expected healthy HTTP backend to accept the connection: %v", err)
+	}
+	_ = conn.Close()
+}
+
+func TestConfiguredIngressUsesApplicationHealthEndpoint(t *testing.T) {
+	t.Setenv("K8S_EDGE_API_ENABLED", "false")
+	t.Setenv("K8S_EDGE_INGRESS_ENABLED", "true")
+	t.Setenv("K8S_EDGE_INGRESS_BACKENDS", "k8sworker1:32080,k8sworker2:32080")
+	t.Setenv("K8S_EDGE_HEADLAMP_ENABLED", "false")
+
+	proxies, err := configuredProxies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(proxies) != 1 || proxies[0].healthScheme != "http" || proxies[0].healthPath != "/healthz" {
+		t.Fatalf("unexpected ingress health configuration: %#v", proxies)
+	}
+}
+
 func TestReadinessChecksOnlyConfiguredRoutes(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
