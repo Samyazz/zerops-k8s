@@ -240,6 +240,17 @@ class WorkflowProfileContractTests(unittest.TestCase):
         self.assertLess(final_api_gate, final_node_gate)
         self.assertIn("kubectl --request-timeout=10s get --raw=/readyz", resize)
 
+    def test_worker_removal_retries_longhorn_webhook_mutations(self):
+        resize = (ROOT / "scripts" / "resize-cluster.sh").read_text(encoding="utf-8")
+        self.assertIn("retry_longhorn_node_mutation()", resize)
+        self.assertIn("Longhorn admission webhook did not recover", resize)
+        self.assertIn(
+            'retry_longhorn_node_mutation patch "nodes.longhorn.io/$node"', resize
+        )
+        self.assertIn(
+            'retry_longhorn_node_mutation delete "nodes.longhorn.io/$node"', resize
+        )
+
     def test_upgrade_never_redeploys_stateful_outer_node_runtimes(self):
         upgrade = (ROOT / "scripts" / "upgrade-cluster.sh").read_text(encoding="utf-8")
         self.assertNotIn('PUSH_AGENT_CODE=true "$ROOT_DIR/scripts/redeploy-node-agents.sh"', upgrade)

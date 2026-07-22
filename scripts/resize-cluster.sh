@@ -57,6 +57,15 @@ wait_cluster_api() {
   done
 }
 
+retry_longhorn_node_mutation() {
+  local deadline=$((SECONDS + 600))
+  until kubectl -n longhorn-system "$@" >/dev/null 2>&1; do
+    (( SECONDS < deadline )) \
+      || die 'Longhorn admission webhook did not recover for the node mutation'
+    sleep 5
+  done
+}
+
 # Zerops CPU/RAM changes restart the existing runtime and must retain its
 # filesystem. Record the repository profile's permanent Kubernetes identities
 # so a resize can never silently replace the cluster while still ending Ready.
@@ -238,8 +247,8 @@ remove_optional_worker() {
   log "horizontally scaling from $max_workers workers to the $baseline_workers-worker profile floor"
   profile_capability storageHealth && wait_longhorn_healthy
   if profile_capability storageHealth && kubectl -n longhorn-system get "nodes.longhorn.io/$node" >/dev/null 2>&1; then
-    kubectl -n longhorn-system patch "nodes.longhorn.io/$node" --type=merge \
-      -p '{"spec":{"allowScheduling":false,"evictionRequested":true}}' >/dev/null
+    retry_longhorn_node_mutation patch "nodes.longhorn.io/$node" --type=merge \
+      -p '{"spec":{"allowScheduling":false,"evictionRequested":true}}'
     deadline=$((SECONDS + 1800))
     while (( SECONDS < deadline )); do
       replicas=$(kubectl -n longhorn-system get replicas.longhorn.io -o json | jq \
@@ -256,7 +265,7 @@ remove_optional_worker() {
   agent_request "$node" POST /v1/cluster/reset >/dev/null
   kubectl delete "node/$node" --ignore-not-found >/dev/null
   profile_capability storageHealth \
-    && kubectl -n longhorn-system delete "nodes.longhorn.io/$node" --ignore-not-found >/dev/null
+    && retry_longhorn_node_mutation delete "nodes.longhorn.io/$node" --ignore-not-found
   zcli service delete "$node" -P "$ZEROPS_PROJECT_ID" --confirm
   current_cordoned=false
   current_node=
