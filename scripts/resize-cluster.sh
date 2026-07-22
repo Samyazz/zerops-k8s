@@ -48,6 +48,15 @@ if (( desired_workers != baseline_workers )); then
     || die "horizontal resize is not supported by Kubernetes profile '$K8S_PROFILE'"
 fi
 
+wait_cluster_api() {
+  local context=${1:-operation} deadline=$((SECONDS + 600))
+  until kubectl --request-timeout=10s get --raw=/readyz >/dev/null 2>&1; do
+    (( SECONDS < deadline )) \
+      || die "Kubernetes API did not recover after $context"
+    sleep 3
+  done
+}
+
 # Zerops CPU/RAM changes restart the existing runtime and must retain its
 # filesystem. Record the repository profile's permanent Kubernetes identities
 # so a resize can never silently replace the cluster while still ending Ready.
@@ -148,11 +157,7 @@ scale_node() {
   wait_for_agent "$node"
   agent_request "$node" POST /v1/node/start >/dev/null
   if [[ "$node" == k8scp* ]]; then
-    deadline=$((SECONDS + 600))
-    until kubectl get --raw=/readyz >/dev/null 2>&1; do
-      (( SECONDS < deadline )) || die "$node API did not recover after its Zerops resize restart"
-      sleep 3
-    done
+    wait_cluster_api "$node Zerops resize restart"
   fi
   kubectl wait "node/$node" --for=condition=Ready --timeout=15m
   recover_terminating_node_pods "$node"
@@ -291,6 +296,10 @@ set_cluster_tag worker-cpu "$worker_cpu"
 set_cluster_tag worker-ram "$worker_ram"
 set_cluster_tag worker-disk "$worker_disk"
 
+# The Zerops VPN resolver can briefly lag the recovered control plane even
+# after the first successful readyz probe. Treat that as recovery time, not as
+# a failed resize, before running the final identity and resource assertions.
+wait_cluster_api 'the completed resize and Zerops setting updates'
 kubectl wait --for=condition=Ready nodes --all --timeout=10m
 [[ $(kubectl get nodes -l node-role.kubernetes.io/control-plane -o name | wc -l) -eq ${#CONTROL_PLANES[@]} ]]
 [[ $(kubectl get nodes -l node-role.kubernetes.io/worker -o name | wc -l) -eq "$desired_workers" ]]

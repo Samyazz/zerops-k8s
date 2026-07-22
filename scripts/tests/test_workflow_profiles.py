@@ -226,8 +226,19 @@ class WorkflowProfileContractTests(unittest.TestCase):
         self.assertIn("identity_after=", resize)
         self.assertIn("permanent node identities", resize)
         self.assertIn("evidence/resize/identity.json", resize)
-        self.assertIn("API did not recover after its Zerops resize restart", resize)
-        self.assertIn("until kubectl get --raw=/readyz", resize)
+        self.assertIn('wait_cluster_api "$node Zerops resize restart"', resize)
+        self.assertIn("until kubectl --request-timeout=10s get --raw=/readyz", resize)
+
+    def test_resize_rechecks_api_after_persisting_cluster_settings(self):
+        resize = (ROOT / "scripts" / "resize-cluster.sh").read_text(encoding="utf-8")
+        settings = resize.index('set_cluster_tag worker-disk "$worker_disk"')
+        final_api_gate = resize.index(
+            "wait_cluster_api 'the completed resize and Zerops setting updates'"
+        )
+        final_node_gate = resize.index("kubectl wait --for=condition=Ready nodes --all")
+        self.assertLess(settings, final_api_gate)
+        self.assertLess(final_api_gate, final_node_gate)
+        self.assertIn("kubectl --request-timeout=10s get --raw=/readyz", resize)
 
     def test_upgrade_never_redeploys_stateful_outer_node_runtimes(self):
         upgrade = (ROOT / "scripts" / "upgrade-cluster.sh").read_text(encoding="utf-8")
