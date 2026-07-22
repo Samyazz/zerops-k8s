@@ -181,9 +181,37 @@ chmod 0600 "$kubeconfig"
 export KUBECONFIG=$kubeconfig
 printf 'KUBECONFIG=%s\n' "$kubeconfig" >> "${GITHUB_ENV:-/dev/null}"
 
+api_host=${CONTROL_PLANE_ENDPOINT%:*}
+api_port=${CONTROL_PLANE_ENDPOINT##*:}
+log_api_readiness_diagnostic() {
+  local addresses insecure_probe kubectl_error
+  if addresses=$(getent ahostsv4 "$api_host" 2>&1); then
+    addresses=$(awk '{print $1}' <<<"$addresses" | sort -u | paste -sd, -)
+    log "API readiness DNS: host=$api_host addresses=$addresses"
+  else
+    log "API readiness DNS failed for $api_host: $(tr '\n' ' ' <<<"$addresses" | head -c 300)"
+  fi
+
+  if insecure_probe=$(curl --insecure --silent --show-error --connect-timeout 5 --max-time 10 \
+      --output /dev/null --write-out '%{http_code}' "https://${api_host}:${api_port}/readyz" 2>&1); then
+    log "API readiness transport probe: endpoint=$CONTROL_PLANE_ENDPOINT http=$insecure_probe"
+  else
+    log "API readiness transport probe failed for $CONTROL_PLANE_ENDPOINT: $(tr '\n' ' ' <<<"$insecure_probe" | head -c 300)"
+  fi
+
+  if ! kubectl_error=$(kubectl get --raw=/readyz 2>&1); then
+    log "API readiness verified-client failure: $(tr '\n' ' ' <<<"$kubectl_error" | head -c 500)"
+  fi
+}
+
 api_deadline=$((SECONDS + 600))
+api_next_diagnostic=$SECONDS
 until kubectl get --raw=/readyz >/dev/null 2>&1; do
   (( SECONDS < api_deadline )) || die 'Kubernetes API did not become ready within 10 minutes'
+  if (( SECONDS >= api_next_diagnostic )); then
+    log_api_readiness_diagnostic
+    api_next_diagnostic=$((SECONDS + 30))
+  fi
   sleep 3
 done
 
