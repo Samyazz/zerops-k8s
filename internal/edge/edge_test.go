@@ -1,11 +1,14 @@
 package edge
 
 import (
+	"bytes"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestConfiguredProxiesPreserveFullDefaults(t *testing.T) {
@@ -112,6 +115,49 @@ func TestConfiguredIngressUsesApplicationHealthEndpoint(t *testing.T) {
 	}
 	if len(proxies) != 1 || proxies[0].healthScheme != "http" || proxies[0].healthPath != "/healthz" {
 		t.Fatalf("unexpected ingress health configuration: %#v", proxies)
+	}
+}
+
+func TestSuccessfulProxyConnectionEmitsStructuredLifecycleLog(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			_ = conn.Close()
+		}
+	}()
+
+	var output bytes.Buffer
+	previousWriter := log.Writer()
+	previousFlags := log.Flags()
+	previousPrefix := log.Prefix()
+	log.SetOutput(&output)
+	log.SetFlags(0)
+	log.SetPrefix("")
+	t.Cleanup(func() {
+		log.SetOutput(previousWriter)
+		log.SetFlags(previousFlags)
+		log.SetPrefix(previousPrefix)
+	})
+
+	client, edgeSide := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		(&proxy{name: "application-ingress", backends: []string{listener.Addr().String()}}).handle(edgeSide)
+		close(done)
+	}()
+	_ = client.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("proxy connection did not finish")
+	}
+	if !strings.Contains(output.String(), `{"component":"edge-proxy","route":"application-ingress","status":"connected"}`) {
+		t.Fatalf("structured lifecycle log missing: %q", output.String())
 	}
 }
 

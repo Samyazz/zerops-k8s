@@ -146,6 +146,7 @@ func (p *proxy) handle(client net.Conn) {
 		return
 	}
 	defer backend.Close()
+	log.Printf(`{"component":"edge-proxy","route":%q,"status":"connected"}`, p.name)
 
 	done := make(chan struct{}, 2)
 	copyConn := func(dst, src net.Conn) {

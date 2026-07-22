@@ -105,7 +105,7 @@ assert_profile_service_inventory() {
 }
 
 collect_platform_log_evidence() {
-  local inventory service id destination
+  local inventory service id destination deadline
   inventory=$(mktemp)
   api_request_file GET "/project/${ZEROPS_PROJECT_ID}/service-stack?limit=100" '' "$inventory"
 
@@ -120,8 +120,14 @@ collect_platform_log_evidence() {
     [[ -n "$service" ]] || continue
     id=$(jq -er --arg service "$service" '.list[] | select(.name == $service) | .id' "$inventory")
     destination="$artifact_dir/zerops-${service}-logs.ndjson"
-    zcli service log -P "$ZEROPS_PROJECT_ID" -S "$id" --format JSONSTREAM --limit 20 \
-      | "$ROOT_DIR/scripts/redact-evidence.sh" >"$destination"
+    deadline=$((SECONDS + 120))
+    until [[ -s "$destination" ]] || (( SECONDS >= deadline )); do
+      if ! zcli service log -P "$ZEROPS_PROJECT_ID" -S "$id" --format JSONSTREAM --limit 20 \
+        | "$ROOT_DIR/scripts/redact-evidence.sh" >"$destination"; then
+        : >"$destination"
+      fi
+      [[ -s "$destination" ]] || sleep 5
+    done
     [[ -s "$destination" ]] || die "Zerops returned no fresh runtime log evidence for $service"
   done < <(profile_json '.services[] | select(.type != "object-storage") | .hostname')
   rm -f "$inventory"
