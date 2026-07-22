@@ -226,6 +226,8 @@ class WorkflowProfileContractTests(unittest.TestCase):
         self.assertIn("identity_after=", resize)
         self.assertIn("permanent node identities", resize)
         self.assertIn("evidence/resize/identity.json", resize)
+        self.assertIn("API did not recover after its Zerops resize restart", resize)
+        self.assertIn("until kubectl get --raw=/readyz", resize)
 
     def test_upgrade_never_redeploys_stateful_outer_node_runtimes(self):
         upgrade = (ROOT / "scripts" / "upgrade-cluster.sh").read_text(encoding="utf-8")

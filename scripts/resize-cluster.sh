@@ -68,7 +68,15 @@ current_cordoned=false
 partial_optional_worker=false
 current_optional_worker=
 restore_cordon() {
+  local deadline
   if [[ "$current_cordoned" == true && -n "$current_node" ]]; then
+    if [[ "$current_node" == k8scp* ]]; then
+      deadline=$((SECONDS + 300))
+      until kubectl get --raw=/readyz >/dev/null 2>&1; do
+        (( SECONDS >= deadline )) && break
+        sleep 3
+      done
+    fi
     kubectl uncordon "$current_node" >/dev/null 2>&1 || true
   fi
   if [[ "$partial_optional_worker" == true && -n "$current_optional_worker" ]]; then
@@ -93,7 +101,7 @@ refresh_inventory() {
 }
 
 scale_node() {
-  local node=$1 cpu_mode=$2 cpu=$3 ram=$4 disk=$5 service_id current_disk process_id
+  local node=$1 cpu_mode=$2 cpu=$3 ram=$4 disk=$5 service_id current_disk process_id deadline
   service_id=$(jq -er --arg node "$node" '.list[] | select(.name == $node) | .id' "$service_inventory")
   current_disk=$(jq -er --arg node "$node" '
     .list[] | select(.name == $node)
@@ -139,6 +147,13 @@ scale_node() {
   [[ -z "$process_id" ]] || wait_public_process "$process_id"
   wait_for_agent "$node"
   agent_request "$node" POST /v1/node/start >/dev/null
+  if [[ "$node" == k8scp* ]]; then
+    deadline=$((SECONDS + 600))
+    until kubectl get --raw=/readyz >/dev/null 2>&1; do
+      (( SECONDS < deadline )) || die "$node API did not recover after its Zerops resize restart"
+      sleep 3
+    done
+  fi
   kubectl wait "node/$node" --for=condition=Ready --timeout=15m
   recover_terminating_node_pods "$node"
   kubectl uncordon "$node" >/dev/null
