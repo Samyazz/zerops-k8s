@@ -57,6 +57,8 @@ jobs:
         shell: bash
         run: |
           source ./scripts/lib.sh
+          [[ "$K8S_PROFILE" != full || "$RUN_FULL_CONFORMANCE" == true ]] \
+            || die 'profile full requires the CNCF certified-conformance suite; no changes were made'
           printf 'Selected profile: %s\n' "$K8S_PROFILE"
 
       - name: Install pinned deployment tools
@@ -84,7 +86,11 @@ jobs:
       - name: Sanitize acceptance evidence before upload
         if: always()
         shell: bash
-        run: ./scripts/sanitize-evidence-tree.sh "$RUNNER_TEMP/evidence"
+        run: |
+          # Recovery archives are deliberately never Action artifacts, even when
+          # encrypted. Their checksums and object keys remain as text evidence.
+          find "$RUNNER_TEMP/evidence" -type f -name '*.age' -delete 2>/dev/null || true
+          ./scripts/sanitize-evidence-tree.sh "$RUNNER_TEMP/evidence"
 
       - name: Upload sanitized acceptance evidence
         if: always()

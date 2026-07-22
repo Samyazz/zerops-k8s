@@ -105,7 +105,8 @@ assert_profile_service_inventory() {
 }
 
 collect_platform_log_evidence() {
-  local inventory service id destination deadline
+  local inventory service id destination deadline latest_timestamp
+  local fresh_after=$(( $(date -u +%s) - 300 ))
   inventory=$(mktemp)
   api_request_file GET "/project/${ZEROPS_PROJECT_ID}/service-stack?limit=100" '' "$inventory"
 
@@ -129,6 +130,13 @@ collect_platform_log_evidence() {
       [[ -s "$destination" ]] || sleep 5
     done
     [[ -s "$destination" ]] || die "Zerops returned no fresh runtime log evidence for $service"
+    latest_timestamp=$(jq -sr '
+      [.[] | .timestamp? | select(type == "string")
+        | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601]
+      | max // 0
+    ' "$destination")
+    (( latest_timestamp >= fresh_after )) \
+      || die "Zerops returned runtime logs for $service, but none were fresh within five minutes"
   done < <(profile_json '.services[] | select(.type != "object-storage") | .hostname')
   rm -f "$inventory"
 }
@@ -136,6 +144,7 @@ collect_platform_log_evidence() {
 collect_platform_stats_evidence() {
   local inventory expected_ids response payload deadline actual_count=0 expected_count
   local backup_id backup_status backup_usage backup_quota
+  local fresh_after=$(( $(date -u +%s) - 600 ))
   require_env ZEROPS_CLIENT_ID
   inventory=$(mktemp)
   expected_ids=$(mktemp)
@@ -159,9 +168,10 @@ collect_platform_stats_evidence() {
         groupBy:"serviceStackId",timeGroupBy:"1m"
       }')
     if api_request_file POST /stats-history/group-by-search "$payload" "$response"; then
-      actual_count=$(jq --slurpfile expected "$expected_ids" '
+      actual_count=$(jq --slurpfile expected "$expected_ids" --argjson fresh_after "$fresh_after" '
         [.items[]?
           | select(.serviceStackId as $id | $expected[0] | index($id))
+          | select(try ((.till | fromdateiso8601) >= $fresh_after) catch false)
           | select(
               (.cpuLimit | type) == "number" and (.cpuUsed | type) == "number"
               and (.ramLimit | type) == "number" and (.ramUsed | type) == "number"
@@ -270,22 +280,51 @@ YAML
 }
 
 run_node_recovery_tests() {
-  local victim=${WORKERS[0]} deadline
+  local victim=${WORKERS[0]} deadline victim_pod survivor_uid rescheduled_pod
   if profile_capability workerDisruption; then
-    log "disrupting worker $victim and proving ingress remains available"
+    victim_pod=$(kubectl -n workloads get pods -l app=demo -o json \
+      | jq -er --arg victim "$victim" \
+        '[.items[] | select(.spec.nodeName == $victim) | .metadata.name][0]')
+    survivor_uid=$(kubectl -n workloads get pods -l app=demo -o json \
+      | jq -er --arg victim "$victim" \
+        '[.items[] | select(.spec.nodeName != $victim) | .metadata.uid][0]')
+    log "disrupting worker $victim and proving the demo reschedules without ingress loss"
     restore_nodes+=("$victim")
     agent_request "$victim" POST /v1/node/stop >/dev/null
     wait_node_unready "$victim"
     deadline=$((SECONDS + 900))
-    until [[ $(kubectl -n workloads get deployment demo -o jsonpath='{.status.availableReplicas}') -ge 1 ]] \
+    rescheduled_pod=''
+    until [[ -n "$rescheduled_pod" ]] \
+      && [[ $(kubectl -n workloads get deployment demo -o jsonpath='{.status.availableReplicas}') -ge 2 ]] \
       && http_probe "http://${EDGE_HOSTNAME}:8080/healthz" >/dev/null; do
-      (( SECONDS < deadline )) || die 'demo ingress was unavailable after a compact-production worker failure'
+      (( SECONDS < deadline )) \
+        || die 'the demo did not reschedule with ingress available after a compact-production worker failure'
+      rescheduled_pod=$(kubectl -n workloads get pods -l app=demo -o json \
+        | jq -r --arg victim "$victim" --arg survivor_uid "$survivor_uid" '
+          [.items[]
+            | select(.spec.nodeName != $victim and .metadata.uid != $survivor_uid)
+            | select(any(.status.containerStatuses[]?; .ready == true))
+            | .metadata.name][0] // ""
+        ')
       sleep 5
     done
     agent_request "$victim" POST /v1/node/start >/dev/null
     kubectl wait "node/$victim" --for=condition=Ready --timeout=10m
     wait_node_dataplane_ready "$victim"
     recover_terminating_node_pods "$victim"
+    kubectl -n workloads delete pod "$rescheduled_pod" --wait=false >/dev/null
+    deadline=$((SECONDS + 600))
+    until [[ $(kubectl -n workloads get pods -l app=demo -o json | jq '
+      [.items[] | select(any(.status.containerStatuses[]?; .ready == true)) | .spec.nodeName]
+      | unique | length
+    ') -eq 2 ]]; do
+      (( SECONDS < deadline )) || die 'demo replicas did not rebalance after the disrupted worker recovered'
+      sleep 5
+    done
+    wait_longhorn_healthy
+    jq -n --arg node "$victim" --arg evictedPod "$victim_pod" --arg replacementPod "$rescheduled_pod" \
+      '{node:$node,evictedPod:$evictedPod,replacementPod:$replacementPod,rescheduled:true,ingressPreserved:true,rebalanced:true}' \
+      >"$artifact_dir/worker-disruption.json"
     restore_nodes=()
     return
   fi
@@ -375,6 +414,21 @@ kubectl -n workloads wait --for=jsonpath='{.status.parents[0].conditions[?(@.typ
 if [[ "$K8S_PROFILE" == production ]]; then
   [[ $(kubectl -n workloads get deployment demo -o jsonpath='{.spec.replicas}') -eq 2 ]]
   [[ $(kubectl -n workloads get pods -l app=demo -o json | jq '[.items[].spec.nodeName] | unique | length') -eq 2 ]]
+  [[ $(kubectl -n traefik-system get pods -l app.kubernetes.io/name=traefik -o json \
+    | jq '[.items[].spec.nodeName] | unique | length') -eq 2 ]]
+  kubectl -n workloads wait \
+    --for=jsonpath='{.status.conditions[?(@.type=="ScalingActive")].status}'=True \
+    horizontalpodautoscaler/demo --timeout=5m
+  kubectl -n workloads get poddisruptionbudget/demo -o json \
+    | jq -e '.spec.minAvailable == 1 and .status.currentHealthy >= 2 and .status.disruptionsAllowed >= 1' >/dev/null
+  kubectl -n workloads get resourcequota/workload-budget -o json \
+    | jq -e '.status.hard == {
+      "requests.cpu":"2", "requests.memory":"2Gi",
+      "limits.cpu":"4", "limits.memory":"4Gi", "pods":"30"
+    }' >/dev/null
+  kubectl -n workloads get limitrange/workload-defaults -o json \
+    | jq -e '.spec.limits[0].defaultRequest == {"cpu":"25m","memory":"32Mi"}
+      and .spec.limits[0].default == {"cpu":"250m","memory":"128Mi"}' >/dev/null
   kubectl -n workloads get poddisruptionbudget/demo horizontalpodautoscaler/demo resourcequota/workload-budget limitrange/workload-defaults \
     -o yaml >"$artifact_dir/workload-controls.yaml"
   http_probe "http://${EDGE_HOSTNAME}:8080/healthz" | tee "$artifact_dir/ingress.txt"
@@ -386,6 +440,14 @@ else
   if kubectl -n workloads get horizontalpodautoscaler/demo >/dev/null 2>&1; then
     die 'staging unexpectedly contains a demo HorizontalPodAutoscaler'
   fi
+  kubectl -n workloads get resourcequota/workload-budget -o json \
+    | jq -e '.status.hard == {
+      "requests.cpu":"1", "requests.memory":"1Gi",
+      "limits.cpu":"2", "limits.memory":"2Gi", "pods":"15"
+    }' >/dev/null
+  kubectl -n workloads get limitrange/workload-defaults -o json \
+    | jq -e '.spec.limits[0].defaultRequest == {"cpu":"25m","memory":"32Mi"}
+      and .spec.limits[0].default == {"cpu":"250m","memory":"128Mi"}' >/dev/null
   kubectl -n workloads get resourcequota/workload-budget limitrange/workload-defaults \
     -o yaml >"$artifact_dir/workload-controls.yaml"
   http_probe "http://${WORKERS[0]}.zerops:32080/healthz" | tee "$artifact_dir/ingress.txt"
@@ -430,6 +492,13 @@ else
     '{sourcePod:$source,target:"demo.workloads.svc.cluster.local:8080",tcpConnected:true}' \
     >"$artifact_dir/service-network.json"
 fi
+
+if kubectl -n workloads exec "${proof_pods[0]}" -- \
+  /agnhost connect --timeout=5s kubernetes.default.svc.cluster.local:443 >/dev/null 2>&1; then
+  die 'workload default-deny NetworkPolicy permitted access to the Kubernetes API Service'
+fi
+jq -n '{sourceNamespace:"workloads",target:"kubernetes.default.svc.cluster.local:443",denied:true}' \
+  >"$artifact_dir/network-policy-negative.json"
 
 verify_security_controls
 if [[ "${SKIP_DISRUPTION_TESTS:-false}" != true ]]; then

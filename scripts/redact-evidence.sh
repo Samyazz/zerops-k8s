@@ -6,8 +6,10 @@ set -Eeuo pipefail
 # false positives over leaking credentials or personal data.
 sed -E \
   -e "s/(Authorization[\"':= ]+)(Bearer[[:space:]]+)?[^,\"'[:space:]]+/\1[REDACTED]/Ig" \
-  -e "s/(Cookie[\"':= ]+)[^,\"'[:space:]]+/\1[REDACTED]/Ig" \
-  -e "s/(Set-Cookie[\"':= ]+)[^,\"'[:space:]]+/\1[REDACTED]/Ig" \
+  -e "s/((Set-Cookie|Cookie)[\"']?[[:space:]]*:[[:space:]]*[\"'])[^\"']*/\1[REDACTED]/Ig" \
+  -e "s/((Set-Cookie|Cookie)[\"']?[[:space:]]*[:=][[:space:]]*)[^;,\"'[:space:]]+/\1[REDACTED]/Ig" \
+  -e "s/(;[[:space:]]*[[:alnum:]_.-]+[[:space:]]*=)[^;,\"'[:space:]]+/\1[REDACTED]/g" \
   -e "s/(token|password|secret)([\"']?[[:space:]]*[:=][[:space:]]*[\"']?)[^,\"'[:space:]]+/\1\2[REDACTED]/Ig" \
   -e 's/[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}/[REDACTED_EMAIL]/g' \
+  -e 's/(^|[^[:xdigit:]:])([[:xdigit:]]{0,4}:[[:xdigit:]:]*:[[:xdigit:]]*)([^[:xdigit:]:]|$)/\1[REDACTED_IP]\3/g' \
   -e 's/(^|[^[:digit:]])(([0-9]{1,3}\.){3}[0-9]{1,3})([^[:digit:]]|$)/\1[REDACTED_IP]\4/g'

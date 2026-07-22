@@ -51,10 +51,13 @@ jobs:
         shell: bash
         run: |
           zcli login "$ZEROPS_TOKEN"
+          source ./scripts/lib.sh
+          live_profile=$(cluster_tag_value profile); live_profile=${live_profile:-full}
+          [[ "$live_profile" == "$K8S_PROFILE" ]] \
+            || die "selected profile $K8S_PROFILE does not match live profile $live_profile; no changes were made"
           zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
           trap 'zcli vpn down >/dev/null 2>&1 || true' EXIT
           [[ -z "$STUCK_PROCESS_ID" ]] || ./scripts/cancel-process.sh "$STUCK_PROCESS_ID"
-          source ./scripts/lib.sh
           if [[ $(cluster_tag_value state) == cleanup-failed ]]; then
             log 'cleanup-failed state has no trustworthy nested agents; purging recipe-owned outer services directly'
             ./scripts/reconcile-profile-services.sh purge

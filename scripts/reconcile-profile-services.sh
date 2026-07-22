@@ -9,8 +9,8 @@ require jq
 require zcli
 
 mode=${1:-apply}
-[[ "$mode" == plan || "$mode" == apply || "$mode" == purge ]] \
-  || die 'usage: reconcile-profile-services.sh [plan|apply|purge]'
+[[ "$mode" == plan || "$mode" == apply || "$mode" == purge || "$mode" == cleanup-created ]] \
+  || die 'usage: reconcile-profile-services.sh [plan|apply|purge|cleanup-created]'
 
 case "$K8S_PROFILE" in
   full) import_file="$ROOT_DIR/import.yaml" ;;
@@ -91,10 +91,12 @@ delete_service() {
   local name=$1
   if [[ "$mode" == purge ]]; then
     log "deleting partial recipe-owned service from failed clean creation: $name"
+  elif [[ "$mode" == cleanup-created ]]; then
+    log "deleting service created by the failed reconciliation attempt: $name"
   else
     log "deleting recipe-owned service not valid for target profile $K8S_PROFILE: $name"
   fi
-  [[ "$mode" == apply || "$mode" == purge ]] || return 0
+  [[ "$mode" == apply || "$mode" == purge || "$mode" == cleanup-created ]] || return 0
   zcli service delete "$name" -P "$ZEROPS_PROJECT_ID" --confirm
   wait_absent "$name"
 }
@@ -108,6 +110,37 @@ delete_order=(
   k8scp3 k8scp2 k8scp1 k8sedge
   grafanadb prometheusbackups elkstorage k8sbackups
 )
+
+if [[ "$mode" == cleanup-created ]]; then
+  tracked_value=$(cluster_tag_value reconcile-created)
+  if [[ -z "$tracked_value" || "$tracked_value" == none ]]; then
+    log 'failed reconciliation did not record any newly created outer services'
+    exit 0
+  fi
+  IFS=. read -r -a tracked <<<"$tracked_value"
+  (( ${#tracked[@]} > 0 )) || die 'invalid empty reconcile-created service set'
+  for name in "${tracked[@]}"; do
+    contains "$name" "${known[@]}" \
+      || die "refusing to delete unrecognized reconcile-created service: $name"
+  done
+  for name in "${delete_order[@]}"; do
+    contains "$name" "${tracked[@]}" || continue
+    service_present "$name" && delete_service "$name"
+  done
+  # Catch future recipe-owned services not yet represented in delete_order.
+  for name in "${tracked[@]}"; do
+    service_present "$name" && delete_service "$name"
+  done
+  refresh_inventory
+  leftovers=()
+  for name in "${tracked[@]}"; do
+    service_present "$name" && leftovers+=("$name")
+  done
+  (( ${#leftovers[@]} == 0 )) \
+    || die "services created by the failed reconciliation remain after cleanup: ${leftovers[*]}"
+  log 'removed only outer services created by the failed reconciliation attempt'
+  exit 0
+fi
 
 if [[ "$mode" == purge ]]; then
   for name in "${delete_order[@]}"; do
@@ -182,6 +215,10 @@ done
 if (( ${#missing[@]} > 0 )); then
   log "profile $K8S_PROFILE is missing services: ${missing[*]}"
   if [[ "$mode" == apply ]]; then
+    if [[ "${TRACK_RECONCILE_CREATED:-false}" == true ]]; then
+      tracked_value=$(IFS=.; printf '%s' "${missing[*]}")
+      set_cluster_tag reconcile-created "$tracked_value"
+    fi
     names=$(IFS=,; printf '%s' "${missing[*]}")
     {
       head -n 1 "$import_file" | grep -q '^#.*Preprocessor=on' \

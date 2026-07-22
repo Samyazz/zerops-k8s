@@ -11,6 +11,7 @@ success=false
 cluster_touched=false
 agents_deployed=false
 vpn_connected=false
+reconcile_created_services=none
 
 finish() {
   status=$?
@@ -106,7 +107,10 @@ if [[ -n "$project_state" && "$project_state" != destroyed && "$project_profile"
 elif [[ -n "$project_state" && "$project_state" != destroyed ]]; then
   export RECONCILE_EXISTING=true
   set_cluster_tag operation reconcile
-  PRESERVE_OPTIONAL_WORKERS=true "$ROOT_DIR/scripts/reconcile-profile-services.sh" apply
+  set_cluster_tag reconcile-created none
+  PRESERVE_OPTIONAL_WORKERS=true TRACK_RECONCILE_CREATED=true \
+    "$ROOT_DIR/scripts/reconcile-profile-services.sh" apply
+  reconcile_created_services=$(cluster_tag_value reconcile-created)
   log "existing repository-managed $K8S_PROFILE cluster detected; reconciling it in place"
 else
   export RECONCILE_EXISTING=false
@@ -136,7 +140,11 @@ cluster_touched=true
 "$ROOT_DIR/scripts/provision-observability.sh"
 "$ROOT_DIR/scripts/reconcile-node-resources.sh"
 if [[ "$RECONCILE_EXISTING" == true ]]; then
-  log 'preserving existing outer node runtimes and their nested Kubernetes state during reconciliation'
+  if [[ "$reconcile_created_services" != none ]]; then
+    TARGET_RUNTIME_SERVICES="$reconcile_created_services" \
+      "$ROOT_DIR/scripts/build-and-deploy.sh"
+  fi
+  log 'preserving existing outer node runtimes and nested state; delivered agents only to newly created runtimes'
 else
   "$ROOT_DIR/scripts/build-and-deploy.sh"
   agents_deployed=true
@@ -150,6 +158,7 @@ if profile_capability backup; then "$ROOT_DIR/scripts/backup-cluster.sh"; fi
 "$ROOT_DIR/scripts/store-credentials.sh"
 set_cluster_tag profile "$K8S_PROFILE"
 set_cluster_state running "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+set_cluster_tag reconcile-created none
 set_cluster_tag attempt complete
 
 success=true

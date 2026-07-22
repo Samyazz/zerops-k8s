@@ -22,7 +22,7 @@ on:
         default: true
         type: boolean
       run_full_conformance:
-        description: Run full CNCF conformance after an applied upgrade
+        description: Run full CNCF conformance after an applied upgrade (mandatory for full)
         required: true
         default: true
         type: boolean
@@ -59,6 +59,8 @@ jobs:
         shell: bash
         run: |
           source ./scripts/lib.sh
+          [[ "$K8S_PROFILE" != full || "$RUN_FULL_CONFORMANCE" == true ]] \
+            || die 'profile full requires the CNCF certified-conformance suite; no changes were made'
           printf 'Selected profile: %s\n' "$K8S_PROFILE"
 
       - name: Install pinned tools
@@ -77,9 +79,12 @@ jobs:
           }
           trap finish EXIT INT TERM
           zcli login "$ZEROPS_TOKEN"
+          source ./scripts/lib.sh
+          live_profile=$(cluster_tag_value profile); live_profile=${live_profile:-full}
+          [[ "$live_profile" == "$K8S_PROFILE" ]] \
+            || die "selected profile $K8S_PROFILE does not match live profile $live_profile; no changes were made"
           zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
           vpn_connected=true
-          source ./scripts/lib.sh
           load_zerops_env
           log 'loaded Zerops project environment; requesting the admin kubeconfig'
           export KUBECONFIG="$RUNNER_TEMP/kubeconfig"

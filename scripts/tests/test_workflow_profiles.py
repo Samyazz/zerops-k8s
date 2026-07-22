@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -30,6 +31,52 @@ def workflow_text(name):
 def workflow(name):
     with (WORKFLOW_DIR / name).open(encoding="utf-8") as handle:
         return yaml.load(handle, Loader=yaml.BaseLoader)
+
+
+def write_mock_platform(directory, inventory):
+    inventory_path = directory / "inventory.json"
+    calls_path = directory / "zcli-calls.txt"
+    inventory_path.write_text(json.dumps({"list": inventory}), encoding="utf-8")
+    calls_path.write_text("", encoding="utf-8")
+    curl = directory / "curl"
+    curl.write_text(
+        """#!/usr/bin/env bash
+set -Eeuo pipefail
+output=
+while (( $# > 0 )); do
+  if [[ $1 == --output ]]; then shift; output=$1; fi
+  shift
+done
+[[ -n $output ]]
+cp "$MOCK_INVENTORY" "$output"
+printf 200
+""",
+        encoding="utf-8",
+    )
+    zcli = directory / "zcli"
+    zcli.write_text(
+        """#!/usr/bin/env bash
+set -Eeuo pipefail
+printf '%q ' "$@" >>"$MOCK_ZCLI_CALLS"
+printf '\n' >>"$MOCK_ZCLI_CALLS"
+if [[ ${1:-} == service && ${2:-} == delete && -n ${3:-} ]]; then
+  temporary=$(mktemp)
+  jq --arg name "$3" '.list |= map(select(.name != $name))' "$MOCK_INVENTORY" >"$temporary"
+  mv "$temporary" "$MOCK_INVENTORY"
+  exit 0
+fi
+exit 97
+""",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    zcli.chmod(0o755)
+    return inventory_path, calls_path
+
+
+def profile_services(name):
+    with (ROOT / "profiles" / f"{name}.json").open(encoding="utf-8") as handle:
+        return [service["hostname"] for service in json.load(handle)["services"]]
 
 
 class WorkflowProfileContractTests(unittest.TestCase):
@@ -98,6 +145,35 @@ class WorkflowProfileContractTests(unittest.TestCase):
         for text in (backup, restore, resize):
             self.assertIn("no changes were made", text)
 
+    def test_full_conformance_cannot_be_disabled_for_full_profile(self):
+        for name in ("reusable-deploy.yml", "upgrade.yml"):
+            text = workflow_text(name)
+            with self.subTest(workflow=name):
+                gate = text.index('"$K8S_PROFILE" != full || "$RUN_FULL_CONFORMANCE" == true')
+                mutation = min(
+                    position for marker in ("Install pinned", "Authenticate to Zerops")
+                    if (position := text.find(marker)) >= 0
+                )
+                self.assertLess(gate, mutation)
+                self.assertIn("profile full requires the CNCF certified-conformance suite", text)
+
+    def test_live_operation_profile_matches_tag_before_vpn_mutation(self):
+        for name in (
+            "backup.yml",
+            "destroy.yml",
+            "maintenance.yml",
+            "resize.yml",
+            "restore-drill.yml",
+            "upgrade.yml",
+        ):
+            text = workflow_text(name)
+            with self.subTest(workflow=name):
+                assertion = text.index("live_profile=$(cluster_tag_value profile)")
+                mutation = text.index("zcli vpn up")
+                self.assertLess(assertion, mutation)
+                self.assertIn("does not match live profile", text)
+                self.assertIn("no changes were made", text)
+
     def test_runtime_capability_gate_rejects_staging_without_side_effects(self):
         for capability in ("backup", "restore", "horizontalResize"):
             command = (
@@ -126,6 +202,91 @@ class WorkflowProfileContractTests(unittest.TestCase):
                 )
                 with self.subTest(profile=profile, capability=capability):
                     self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_all_profile_pair_plans_are_deterministic_and_ownership_scoped(self):
+        unrelated = ["zcp", "customerdb"]
+        planner = ROOT / "scripts" / "reconcile-profile-services.sh"
+        for source in PROFILES:
+            source_services = profile_services(source)
+            source_inventory = [
+                {"name": name, "status": "ACTIVE"}
+                for name in [*source_services, *unrelated]
+            ]
+            for target in PROFILES:
+                with self.subTest(source=source, target=target):
+                    outputs = []
+                    calls = []
+                    for _ in range(2):
+                        with tempfile.TemporaryDirectory() as temporary:
+                            mock_dir = Path(temporary)
+                            inventory_path, calls_path = write_mock_platform(mock_dir, source_inventory)
+                            result = subprocess.run(
+                                [str(planner), "plan"],
+                                cwd=ROOT,
+                                text=True,
+                                capture_output=True,
+                                env={
+                                    **os.environ,
+                                    "PATH": f"{mock_dir}:{os.environ['PATH']}",
+                                    "K8S_PROFILE": target,
+                                    "ZEROPS_TOKEN": "test-token",
+                                    "ZEROPS_PROJECT_ID": "test-project",
+                                    "MOCK_INVENTORY": str(inventory_path),
+                                    "MOCK_ZCLI_CALLS": str(calls_path),
+                                },
+                            )
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            outputs.append(result.stdout)
+                            calls.append(calls_path.read_text(encoding="utf-8"))
+                    self.assertEqual(outputs[0], outputs[1])
+                    self.assertEqual(calls, ["", ""], "plan mode invoked mutating zcli")
+                    for name in unrelated:
+                        self.assertNotIn(name, outputs[0])
+                    deleted = set(re.findall(r"target profile [^:]+: ([a-z0-9]+)", outputs[0]))
+                    expected_deleted = set(source_services) - set(profile_services(target))
+                    self.assertEqual(deleted, expected_deleted)
+                    missing_match = re.search(r"is missing services: (.+)$", outputs[0], re.MULTILINE)
+                    missing = set(missing_match.group(1).split()) if missing_match else set()
+                    expected_missing = set(profile_services(target)) - set(source_services)
+                    self.assertEqual(missing, expected_missing)
+
+    def test_recipe_owned_purge_is_idempotent_and_preserves_unrelated_services(self):
+        purge = ROOT / "scripts" / "reconcile-profile-services.sh"
+        unrelated = ["zcp", "customerdb"]
+        source_services = profile_services("production")
+        inventory = [
+            {"name": name, "status": "ACTIVE"}
+            for name in [*source_services, *unrelated]
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            mock_dir = Path(temporary)
+            inventory_path, calls_path = write_mock_platform(mock_dir, inventory)
+            environment = {
+                **os.environ,
+                "PATH": f"{mock_dir}:{os.environ['PATH']}",
+                "K8S_PROFILE": "production",
+                "ZEROPS_TOKEN": "test-token",
+                "ZEROPS_PROJECT_ID": "test-project",
+                "MOCK_INVENTORY": str(inventory_path),
+                "MOCK_ZCLI_CALLS": str(calls_path),
+            }
+            first = subprocess.run(
+                [str(purge), "purge"], cwd=ROOT, text=True, capture_output=True, env=environment,
+            )
+            self.assertEqual(first.returncode, 0, first.stderr)
+            first_calls = calls_path.read_text(encoding="utf-8").splitlines()
+            second = subprocess.run(
+                [str(purge), "purge"], cwd=ROOT, text=True, capture_output=True, env=environment,
+            )
+            self.assertEqual(second.returncode, 0, second.stderr)
+            second_calls = calls_path.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(second_calls, first_calls, "second purge was not a no-op")
+            remaining = json.loads(inventory_path.read_text(encoding="utf-8"))["list"]
+            self.assertEqual([item["name"] for item in remaining], unrelated)
+            self.assertEqual(
+                {re.match(r"service delete ([^ ]+)", call).group(1) for call in first_calls},
+                set(source_services),
+            )
 
     def test_failed_clean_creation_has_an_owned_outer_service_purge(self):
         deploy = (ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
@@ -189,9 +350,11 @@ class WorkflowProfileContractTests(unittest.TestCase):
 
     def test_production_upgrade_rolls_workers_before_single_control_plane(self):
         upgrade = (ROOT / "scripts" / "upgrade-cluster.sh").read_text(encoding="utf-8")
+        guide = (ROOT / "docs" / "upgrades.md").read_text(encoding="utf-8")
         production = upgrade.index('[[ "$K8S_PROFILE" == production ]]')
         workers_first = upgrade.index('upgrade_order=("${workers[@]}" "${CONTROL_PLANES[@]}")')
         self.assertLess(production, workers_first)
+        self.assertIn("| `production` | Workers serially, then sole `k8scp1` |", guide)
 
     def test_maintenance_acceptance_can_skip_duplicate_disruptions(self):
         acceptance = (ROOT / "scripts" / "acceptance-profile.sh").read_text(encoding="utf-8")
@@ -352,13 +515,22 @@ class WorkflowProfileContractTests(unittest.TestCase):
                 self.assertGreater(sanitizer, -1)
                 self.assertGreater(upload, sanitizer)
 
+    def test_deploy_discards_encrypted_recovery_archives_before_sanitizing(self):
+        text = workflow_text("reusable-deploy.yml")
+        discard = text.index("-name '*.age' -delete")
+        sanitizer = text.index('./scripts/sanitize-evidence-tree.sh "$RUNNER_TEMP/evidence"', discard)
+        upload = text.index("uses: actions/upload-artifact@", sanitizer)
+        self.assertLess(discard, sanitizer)
+        self.assertLess(sanitizer, upload)
+
     def test_redactor_removes_required_sensitive_classes(self):
         sample = (
             "Authorization: Bearer abc.def.ghi\n"
-            "Cookie: session=secret-cookie\n"
+            "Cookie: session=secret-cookie; csrf=second-cookie-secret\n"
             "Set-Cookie: auth=another-secret\n"
+            'headers={"Cookie":"signed=quoted-cookie-secret; theme=dark"}\n'
             "token=token-value password: pass-value secret='secret-value'\n"
-            "owner@example.invalid connected from 203.0.113.42\n"
+            "owner@example.invalid connected from 203.0.113.42 and 2001:db8::42\n"
         )
         result = subprocess.run(
             [str(ROOT / "scripts" / "redact-evidence.sh")],
@@ -372,12 +544,15 @@ class WorkflowProfileContractTests(unittest.TestCase):
         for sensitive in (
             "abc.def.ghi",
             "secret-cookie",
+            "second-cookie-secret",
             "another-secret",
+            "quoted-cookie-secret",
             "token-value",
             "pass-value",
             "secret-value",
             "owner@example.invalid",
             "203.0.113.42",
+            "2001:db8::42",
         ):
             self.assertNotIn(sensitive, result.stdout)
         self.assertIn("[REDACTED]", result.stdout)

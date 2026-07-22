@@ -20,6 +20,31 @@ checksum="$archive.sha256"
 image="zerops-k8s-node:v${KUBERNETES_VERSION}"
 object="node-images/zerops-k8s-node-v${KUBERNETES_VERSION}.tar.gz"
 
+targeted_delivery=false
+delivery_targets=()
+if [[ -n "${TARGET_RUNTIME_SERVICES:-}" ]]; then
+  targeted_delivery=true
+  if [[ "$TARGET_RUNTIME_SERVICES" != none ]]; then
+    IFS=. read -r -a delivery_targets <<<"$TARGET_RUNTIME_SERVICES"
+  fi
+  for service in "${delivery_targets[@]}"; do
+    jq -e --arg service "$service" '.services[] | select(.hostname == $service)' \
+      "$PROFILE_FILE" >/dev/null \
+      || die "refusing targeted delivery to a service outside profile $K8S_PROFILE: $service"
+  done
+fi
+[[ "${RECONCILE_EXISTING:-false}" != true || "$targeted_delivery" == true ]] \
+  || die 'in-place reconciliation requires an explicit TARGET_RUNTIME_SERVICES ownership set'
+
+service_selected() {
+  local service=$1 selected
+  [[ "$targeted_delivery" == false ]] && return 0
+  for selected in "${delivery_targets[@]}"; do
+    [[ "$selected" == "$service" ]] && return 0
+  done
+  return 1
+}
+
 load_zerops_env
 if [[ "${RECONCILE_EXISTING:-false}" != true && "$NODE_IMAGE_MODE" == object-storage ]]; then
   if [[ -z "${K8S_IMAGE_STORAGE_ENDPOINT:-}" ]]; then
@@ -92,28 +117,41 @@ deploy_runtime_artifact() {
   die "prebuilt runtime deployment failed after three attempts: $service"
 }
 
-if [[ "$EDGE_ENABLED" == true || "${RECONCILE_EXISTING:-false}" != true ]]; then
+needs_node_artifact=false
+if [[ "$EDGE_ENABLED" == true ]] && service_selected "$EDGE_HOSTNAME"; then
+  needs_node_artifact=true
+fi
+while IFS= read -r service; do
+  if service_selected "$service"; then
+    needs_node_artifact=true
+    break
+  fi
+done < <(jq -r '.services[] | select(.type | startswith("docker@")) | .hostname' "$PROFILE_FILE")
+
+if [[ "$needs_node_artifact" == true ]]; then
   # The reviewed artifact is built and tested on the Actions runner, then sent
   # directly to each runtime. This avoids depending on a Zerops build container
   # for the critical node-agent delivery path.
   prepare_node_agent_artifact
 fi
 
-if [[ "$EDGE_ENABLED" == true ]]; then
+if [[ "$EDGE_ENABLED" == true ]] && service_selected "$EDGE_HOSTNAME"; then
   edge_setup=$(jq -er --arg hostname "$EDGE_HOSTNAME" \
     '.services[] | select(.hostname == $hostname) | .setup' "$PROFILE_FILE")
   deploy_runtime_artifact "$EDGE_HOSTNAME" "$edge_setup"
 fi
 
-if [[ "${RECONCILE_EXISTING:-false}" != true ]]; then
-  while IFS=$'\t' read -r service setup; do
+while IFS=$'\t' read -r service setup; do
+  if service_selected "$service"; then
     deploy_runtime_artifact "$service" "$setup"
-  done < <(jq -r '.services[] | select(.type | startswith("docker@")) | [.hostname,.setup] | @tsv' "$PROFILE_FILE")
-else
-  log 'preserving running nested node state during in-place reconciliation'
-fi
+  fi
+done < <(jq -r '.services[] | select(.type | startswith("docker@")) | [.hostname,.setup] | @tsv' "$PROFILE_FILE")
 
 if [[ $(profile_json '.addons.observability') == advanced ]]; then
-  deploy_with_build prometheus prometheus
-  deploy_with_build grafana grafana
+  service_selected prometheus && deploy_with_build prometheus prometheus
+  service_selected grafana && deploy_with_build grafana grafana
+fi
+
+if [[ "$targeted_delivery" == true ]]; then
+  log "targeted runtime delivery completed without redeploying pre-existing services: ${TARGET_RUNTIME_SERVICES}"
 fi

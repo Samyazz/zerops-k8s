@@ -80,6 +80,10 @@ class ClusterProfileManifestsTest(unittest.TestCase):
             deployment["spec"]["template"]["spec"]["topologySpreadConstraints"][0]["whenUnsatisfiable"],
             "DoNotSchedule",
         )
+        self.assertEqual(
+            deployment["spec"]["template"]["spec"]["topologySpreadConstraints"][0]["nodeTaintsPolicy"],
+            "Honor",
+        )
         resources = deployment["spec"]["template"]["spec"]["containers"][0]["resources"]
         self.assertEqual(resources["requests"], {"cpu": "25m", "memory": "32Mi"})
         self.assertEqual(resources["limits"], {"cpu": "250m", "memory": "128Mi"})
@@ -87,6 +91,13 @@ class ClusterProfileManifestsTest(unittest.TestCase):
         self.assertIn("HorizontalPodAutoscaler", by_kind)
         self.assertEqual(by_kind["HorizontalPodAutoscaler"]["spec"]["minReplicas"], 2)
         self.assertEqual(by_kind["HorizontalPodAutoscaler"]["spec"]["maxReplicas"], 6)
+        self.assertEqual(
+            by_kind["ResourceQuota"]["spec"]["hard"],
+            {
+                "requests.cpu": "2", "requests.memory": "2Gi",
+                "limits.cpu": "4", "limits.memory": "4Gi", "pods": "30",
+            },
+        )
 
     def test_staging_demo_is_intentionally_minimal(self):
         documents = yaml_documents(ROOT / "kubernetes/profiles/staging/demo.yaml")
@@ -94,7 +105,13 @@ class ClusterProfileManifestsTest(unittest.TestCase):
         self.assertEqual(by_kind["Deployment"]["spec"]["replicas"], 1)
         self.assertNotIn("PodDisruptionBudget", by_kind)
         self.assertNotIn("HorizontalPodAutoscaler", by_kind)
-        self.assertEqual(by_kind["ResourceQuota"]["spec"]["hard"]["pods"], "15")
+        self.assertEqual(
+            by_kind["ResourceQuota"]["spec"]["hard"],
+            {
+                "requests.cpu": "1", "requests.memory": "1Gi",
+                "limits.cpu": "2", "limits.memory": "2Gi", "pods": "15",
+            },
+        )
 
     def test_traefik_is_digest_pinned_and_bounded(self):
         versions = dict(
@@ -112,6 +129,10 @@ class ClusterProfileManifestsTest(unittest.TestCase):
             self.assertEqual(values["resources"]["limits"], {"cpu": "1", "memory": "512Mi"})
             self.assertTrue(values["providers"]["kubernetesGateway"]["enabled"])
             self.assertFalse(values["providers"]["kubernetesIngress"]["enabled"])
+            if profile == "production":
+                spread = values["topologySpreadConstraints"][0]
+                self.assertEqual(spread["topologyKey"], "kubernetes.io/hostname")
+                self.assertEqual(spread["whenUnsatisfiable"], "DoNotSchedule")
 
     def test_metrics_server_and_longhorn_match_profile_contracts(self):
         for profile, replicas in (("production", 2), ("staging", 1)):
@@ -119,6 +140,10 @@ class ClusterProfileManifestsTest(unittest.TestCase):
             self.assertEqual(values["replicas"], replicas)
             self.assertEqual(values["resources"]["requests"], {"cpu": "50m", "memory": "100Mi"})
             self.assertEqual(values["resources"]["limits"], {"cpu": "250m", "memory": "256Mi"})
+            if profile == "production":
+                spread = values["topologySpreadConstraints"][0]
+                self.assertEqual(spread["topologyKey"], "kubernetes.io/hostname")
+                self.assertEqual(spread["whenUnsatisfiable"], "DoNotSchedule")
         longhorn = yaml.safe_load((ROOT / "kubernetes/profiles/production/longhorn-values.yaml").read_text())
         self.assertEqual(longhorn["persistence"]["defaultClassReplicaCount"], 2)
         self.assertEqual(longhorn["longhornUI"]["replicas"], 0)

@@ -28,14 +28,23 @@ if [[ ( "$state" == destroyed || "$state" == deploying || "$state" == cleanup-fa
   exit 0
 fi
 
-if [[ "$state" != deploying || "${repository,,}" != "${GITHUB_REPOSITORY,,}" || "$owner_run" != "$GITHUB_RUN_ID" ]]; then
-  log "cleanup skipped because this run does not own the active deployment lock"
+if [[ "$operation" == reconcile \
+      && "${repository,,}" == "${GITHUB_REPOSITORY,,}" \
+      && "$attempt" == "$GITHUB_RUN_ID" ]]; then
+  log 'failed reconciliation owns only its recorded newly created services; removing those before any retry'
+  if ! "$ROOT_DIR/scripts/reconcile-profile-services.sh" cleanup-created; then
+    set_cluster_state cleanup-failed "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" || true
+    die 'failed-reconciliation outer-service cleanup failed; later deployments are blocked'
+  fi
+  set_cluster_state reconcile-failed "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+  set_cluster_tag reconcile-created none
+  set_cluster_tag attempt complete
+  log 'failed reconciliation preserved all pre-existing and unrelated outer services'
   exit 0
 fi
 
-if [[ "$operation" == reconcile ]]; then
-  set_cluster_state reconcile-failed "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
-  log 'cleanup preserved the pre-existing cluster; reconciliation did not create partial infrastructure'
+if [[ "$state" != deploying || "${repository,,}" != "${GITHUB_REPOSITORY,,}" || "$owner_run" != "$GITHUB_RUN_ID" ]]; then
+  log "cleanup skipped because this run does not own the active deployment lock"
   exit 0
 fi
 

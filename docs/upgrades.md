@@ -7,7 +7,7 @@ Ubuntu security updates are applied automatically inside nested nodes, excluding
 | Profile | Node order | Pre-upgrade recovery gate | Post-upgrade acceptance |
 |---|---|---|---|
 | `full` | `k8scp1`, `k8scp2`, `k8scp3` serially, then workers serially | Fresh etcd/identity and Longhorn backup plus isolated restore proof | Functional suite and full CNCF conformance by default |
-| `production` | Sole `k8scp1`, then workers serially | Fresh etcd/identity and Longhorn backup plus isolated restore proof | Functional suite and Sonobuoy quick by default |
+| `production` | Workers serially, then sole `k8scp1` | Fresh etcd/identity and Longhorn backup plus isolated restore proof | Functional suite and Sonobuoy quick by default |
 | `staging` | Sole `k8scp1`, then `k8sworker1` | No backup capability; require clean recreatability and a plan-only pass | Functional networking/DNS/ingress/security smoke suite |
 
 The `production` and `staging` API is unavailable while the sole control plane is upgraded or restarted. The workflow must report this expected interruption rather than describe it as failover. Existing production worker workloads may continue, but scheduling and reconciliation pause.

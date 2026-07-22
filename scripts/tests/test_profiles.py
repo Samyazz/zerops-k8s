@@ -206,6 +206,52 @@ class ProfileContractTests(unittest.TestCase):
                     self.assertIn(f"minDisk: {disk}", block)
                     self.assertIn(f"maxDisk: {disk}", block)
 
+    def test_every_import_mirrors_descriptor_service_resources(self):
+        for profile_name in EXPECTED:
+            profile = load_profile(profile_name)
+            text = import_path(profile_name).read_text(encoding="utf-8")
+            service_blocks = blocks(text, "hostname")
+            for service in profile["services"]:
+                name = service["hostname"]
+                with self.subTest(profile=profile_name, service=name):
+                    block = service_blocks[name]
+                    self.assertIn(f"type: {service['type']}", block)
+                    for field in ("minContainers", "maxContainers"):
+                        if field in service:
+                            self.assertRegex(block, rf"(?m)^    {field}: {service[field]}$")
+                    resources = service.get("resources")
+                    if resources:
+                        self.assertIn(f"cpuMode: {resources['cpuMode']}", block)
+                        if "cpu" in resources:
+                            self.assertIn(f"minCpu: {resources['cpu']}", block)
+                            self.assertIn(f"maxCpu: {resources['cpu']}", block)
+                            self.assertIn(f"startCpuCoreCount: {resources['cpu']}", block)
+                            self.assertIn(f"minRam: {resources['ramGb']}", block)
+                            self.assertIn(f"maxRam: {resources['ramGb']}", block)
+                            self.assertIn(f"minDisk: {resources['diskGb']}", block)
+                            self.assertIn(f"maxDisk: {resources['diskGb']}", block)
+                        else:
+                            self.assertIn(f"minCpu: {resources['minCpu']}", block)
+                            self.assertIn(f"maxCpu: {resources['maxCpu']}", block)
+                            self.assertIn(f"minRam: {resources['minRamGb']}", block)
+                            self.assertIn(f"maxRam: {resources['maxRamGb']}", block)
+                            self.assertIn(f"minDisk: {resources['minDiskGb']}", block)
+                            self.assertIn(f"maxDisk: {resources['maxDiskGb']}", block)
+                    if "objectStorageSizeGb" in service:
+                        self.assertIn(f"objectStorageSize: {service['objectStorageSizeGb']}", block)
+
+    def test_production_edge_and_backup_are_redundant_and_private(self):
+        profile = load_profile("production")
+        text = import_path("production").read_text(encoding="utf-8")
+        service_blocks = blocks(text, "hostname")
+        edge = service_blocks[profile["topology"]["edge"]["hostname"]]
+        backup = service_blocks[profile["topology"]["backup"]["hostname"]]
+        self.assertEqual(profile["topology"]["edge"]["containers"], 2)
+        self.assertIn("minContainers: 2", edge)
+        self.assertIn("maxContainers: 2", edge)
+        self.assertIn("enableSubdomainAccess: true", edge)
+        self.assertIn("objectStoragePolicy: private", backup)
+
     def test_new_imports_defer_cluster_secrets_to_the_workflow(self):
         library = (ROOT / "scripts/lib.sh").read_text(encoding="utf-8")
         deploy = (ROOT / "scripts/deploy.sh").read_text(encoding="utf-8")

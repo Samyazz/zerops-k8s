@@ -13,7 +13,7 @@ on:
           - production
           - staging
       run_full_conformance:
-        description: Run full CNCF conformance (can take hours)
+        description: Run full CNCF conformance (mandatory for full; optional for compact profiles)
         required: true
         default: true
         type: boolean
