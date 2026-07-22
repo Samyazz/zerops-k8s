@@ -3,6 +3,7 @@ FROM ubuntu:24.04
 ARG KUBERNETES_VERSION=1.36.2
 ARG KUBERNETES_MINOR=1.36
 ARG KUBERNETES_PACKAGE_VERSION=1.36.2-2.1
+ARG CRI_TOOLS_PACKAGE_VERSION=1.36.0-1.1
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -39,8 +40,9 @@ RUN apt-get update \
         "kubeadm=${KUBERNETES_PACKAGE_VERSION}" \
         "kubectl=${KUBERNETES_PACKAGE_VERSION}" \
         "kubelet=${KUBERNETES_PACKAGE_VERSION}" \
+        "cri-tools=${CRI_TOOLS_PACKAGE_VERSION}" \
         containerd \
-    && apt-mark hold kubeadm kubectl kubelet containerd \
+    && apt-mark hold kubeadm kubectl kubelet cri-tools containerd \
     && rm -rf /var/lib/apt/lists/* \
     && systemctl enable containerd kubelet \
     && systemctl enable iscsid \
@@ -70,6 +72,7 @@ RUN printf '%s\n' \
         '  "kubeadm";' \
         '  "kubectl";' \
         '  "kubelet";' \
+        '  "cri-tools";' \
         '  "containerd";' \
         '};' \
         > /etc/apt/apt.conf.d/52zerops-k8s-security

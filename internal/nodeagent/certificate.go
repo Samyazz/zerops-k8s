@@ -66,9 +66,9 @@ func (a *agent) ensureAPIServerDSRSAN(ctx context.Context) (bool, error) {
 
 	const restart = `
 set -eu
-container_id=$(ctr -n k8s.io containers list | awk '$2 ~ /\/kube-apiserver:/ {print $1; exit}')
+container_id=$(crictl ps --name kube-apiserver -q | head -n 1)
 test -n "$container_id"
-ctr -n k8s.io tasks kill --signal SIGTERM "$container_id"
+crictl stop "$container_id" >/dev/null
 `
 	if _, err := a.runner.run(ctx, "docker", []string{
 		"exec", a.cfg.ContainerName, "sh", "-ec", restart,

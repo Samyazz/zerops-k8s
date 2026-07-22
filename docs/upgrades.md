@@ -14,7 +14,7 @@ The `production` and `staging` API is unavailable while the sole control plane i
 
 ## Controlled upgrade procedure
 
-1. Update `KUBERNETES_VERSION` and `KUBERNETES_PACKAGE_VERSION` together in [`versions.env`](../versions.env), plus matching profile/import node-image variables. Do not skip a minor version or downgrade.
+1. Update `KUBERNETES_VERSION`, `KUBERNETES_PACKAGE_VERSION`, and the compatible `CRI_TOOLS_PACKAGE_VERSION` together in [`versions.env`](../versions.env), plus matching profile/import node-image variables. Do not skip a minor version or downgrade.
 2. Review the selected profile's compatibility tuple. `full` includes Calico, Istio, Longhorn and Gateway API; `production` includes Calico, Traefik, Longhorn and Gateway API; `staging` includes Calico, Traefik and Gateway API. Add the exact reviewed tuple to [`upgrade-policy.json`](../upgrade-policy.json).
 3. Dispatch **Upgrade Zerops Kubernetes version** with the live `profile`, `confirm_target` exactly equal to `v<KUBERNETES_VERSION>`, and `plan_only=true`.
 4. Review the sanitized plan and, when supported, recovery evidence. Dispatch the same commit/profile/target with `plan_only=false`.

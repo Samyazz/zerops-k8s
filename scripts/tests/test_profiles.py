@@ -359,6 +359,19 @@ class ProfileContractTests(unittest.TestCase):
                 self.assertNotIn("K8S_MODE: edge", block)
                 self.assertNotIn("go build", block)
 
+    def test_nested_image_pins_crictl_for_api_certificate_reloads(self):
+        versions = (ROOT / "versions.env").read_text(encoding="utf-8")
+        dockerfile = (ROOT / "node" / "Dockerfile").read_text(encoding="utf-8")
+        delivery = (ROOT / "scripts" / "build-and-deploy.sh").read_text(encoding="utf-8")
+        staging = blocks((ROOT / "zerops.yaml").read_text(encoding="utf-8"), "setup")[
+            "controlplane1-staging"
+        ]
+        self.assertRegex(versions, r"(?m)^CRI_TOOLS_PACKAGE_VERSION=[0-9.-]+$")
+        self.assertIn('"cri-tools=${CRI_TOOLS_PACKAGE_VERSION}"', dockerfile)
+        self.assertIn("apt-mark hold kubeadm kubectl kubelet cri-tools containerd", dockerfile)
+        for source in (delivery, staging):
+            self.assertIn('--build-arg "CRI_TOOLS_PACKAGE_VERSION=${CRI_TOOLS_PACKAGE_VERSION}"', source)
+
     def test_lib_defaults_to_full_and_preserves_node_order(self):
         command = (
             'source scripts/lib.sh; '

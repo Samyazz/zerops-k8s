@@ -120,8 +120,8 @@ func TestEnsureAPIServerDSRSANIsAtomicAndIdempotent(t *testing.T) {
 	}
 	joined := runner.joinedCommands()
 	if !strings.Contains(joined, "mktemp /etc/kubernetes/pki/.apiserver.crt") ||
-		!strings.Contains(joined, "ctr -n k8s.io containers list") ||
-		!strings.Contains(joined, "ctr -n k8s.io tasks kill --signal SIGTERM") ||
+		!strings.Contains(joined, "crictl ps --name kube-apiserver") ||
+		!strings.Contains(joined, "crictl stop") ||
 		!strings.Contains(joined, "openssl x509 -in \"$certificate\" -noout -checkhost") {
 		t.Fatalf("atomic update or API restart command is incomplete: %s", joined)
 	}
@@ -158,7 +158,7 @@ func (r *certificateRunner) run(_ context.Context, name string, args []string, s
 	if strings.Contains(joined, "mktemp /etc/kubernetes/pki/.apiserver.crt") {
 		r.files["apiserver.crt"] = stdin
 	}
-	if strings.Contains(joined, "ctr -n k8s.io tasks kill --signal SIGTERM") {
+	if strings.Contains(joined, "crictl stop") {
 		r.servingDSR = true
 	}
 	return "", nil

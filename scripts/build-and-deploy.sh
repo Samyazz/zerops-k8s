@@ -56,6 +56,7 @@ if [[ "${RECONCILE_EXISTING:-false}" != true && "$NODE_IMAGE_MODE" == object-sto
     --build-arg "KUBERNETES_VERSION=${KUBERNETES_VERSION}" \
     --build-arg "KUBERNETES_MINOR=${KUBERNETES_VERSION%.*}" \
     --build-arg "KUBERNETES_PACKAGE_VERSION=${KUBERNETES_PACKAGE_VERSION}" \
+    --build-arg "CRI_TOOLS_PACKAGE_VERSION=${CRI_TOOLS_PACKAGE_VERSION}" \
     -t "$image" -f "$ROOT_DIR/node/Dockerfile" "$ROOT_DIR"
   docker save "$image" | gzip -n -1 > "$archive"
   digest=$(sha256sum "$archive" | awk '{print $1}')

@@ -589,6 +589,7 @@ zerops:
               --build-arg "KUBERNETES_VERSION=${KUBERNETES_VERSION}" \
               --build-arg "KUBERNETES_MINOR=${KUBERNETES_VERSION%.*}" \
               --build-arg "KUBERNETES_PACKAGE_VERSION=${KUBERNETES_PACKAGE_VERSION}" \
+              --build-arg "CRI_TOOLS_PACKAGE_VERSION=${CRI_TOOLS_PACKAGE_VERSION}" \
               --tag "$K8S_NODE_IMAGE" \
               --file node/Dockerfile .
           fi
