@@ -52,11 +52,17 @@ See [operations](docs/operations.md), [upgrades](docs/upgrades.md), [disaster re
 
 The imports are alternatives, not services to import side-by-side. Use exactly one topology per project:
 
-- [`import.yaml`](import.yaml) / [raw full import](https://raw.githubusercontent.com/Samyazz/zerops-k8s/v0.1.0/import.yaml)
-- [`import.production.yaml`](import.production.yaml) / [raw compact-production import](https://raw.githubusercontent.com/Samyazz/zerops-k8s/v0.1.0/import.production.yaml)
-- [`import.staging.yaml`](import.staging.yaml) / [raw minimal-staging import](https://raw.githubusercontent.com/Samyazz/zerops-k8s/v0.1.0/import.staging.yaml)
+- [`import.yaml`](import.yaml) / [raw full import](https://raw.githubusercontent.com/Samyazz/zerops-k8s/0f3ddf700174be7cb71b158317b51151db4de6cf/import.yaml)
+- [`import.production.yaml`](import.production.yaml) / [raw compact-production import](https://raw.githubusercontent.com/Samyazz/zerops-k8s/0f3ddf700174be7cb71b158317b51151db4de6cf/import.production.yaml)
+- [`import.staging.yaml`](import.staging.yaml) / [raw minimal-staging import](https://raw.githubusercontent.com/Samyazz/zerops-k8s/0f3ddf700174be7cb71b158317b51151db4de6cf/import.staging.yaml)
 
-The raw links use the immutable, acceptance-tested `v0.1.0` recipe release. Paste one raw file into **Import a project** in the Zerops dashboard, or download it and run `zcli project project-import FILE`. To operate in the existing project, use the profile-aware deployment workflow; do not paste a second profile import over a running cluster. See [profile and publishing details](docs/profiles.md).
+The raw links use the exact immutable commit that passed static, live backup,
+and evidence-safety acceptance. A release tag is only a human-friendly alias;
+published imports remain pinned to the full commit SHA. Paste one raw file into
+**Import a project** in the Zerops dashboard, or download it and run
+`zcli project project-import FILE`. To operate in the existing project, use the
+profile-aware deployment workflow; do not paste a second profile import over a
+running cluster. See [profile and publishing details](docs/profiles.md).
 
 [`zerops.yaml`](zerops.yaml) defines the shared node and edge build/run setups. The public imports contain no cluster credential values; the deployment workflow generates them locally and stores them as sensitive Zerops project secrets before any node code is deployed.
 

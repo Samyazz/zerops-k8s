@@ -12,7 +12,11 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 PROFILES = ["full", "production", "staging"]
-RECIPE_RELEASE_REF = "v0.1.0"
+RECIPE_RELEASE_REF = dict(
+    line.split("=", 1)
+    for line in (ROOT / "release.env").read_text(encoding="utf-8").splitlines()
+    if line and not line.startswith("#")
+)["RECIPE_RELEASE_REF"]
 PROFILE_WORKFLOWS = [
     "backup.yml",
     "deploy.yml",
@@ -1249,6 +1253,7 @@ class WorkflowProfileContractTests(unittest.TestCase):
         self.assertIn('timestamp="2026-07-22T07:58:28.607822Z"', result.stdout)
 
     def test_profile_documentation_covers_workflows_endpoints_and_imports(self):
+        self.assertRegex(RECIPE_RELEASE_REF, r"\A[0-9a-f]{40}\Z")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         guide = (ROOT / "docs" / "profiles.md").read_text(encoding="utf-8")
         for name in PROFILE_WORKFLOWS:
@@ -1272,6 +1277,23 @@ class WorkflowProfileContractTests(unittest.TestCase):
         self.assertIn("immutable", guide)
         self.assertRegex(readme, r"production` is not control-plane HA")
         self.assertIn("not three clusters intended to coexist in one project", guide)
+
+    def test_publication_verifier_is_unauthenticated_and_byte_exact(self):
+        verifier = (ROOT / "scripts" / "verify-publication.sh").read_text(
+            encoding="utf-8"
+        )
+        for import_name in (
+            "import.yaml",
+            "import.production.yaml",
+            "import.staging.yaml",
+        ):
+            self.assertIn(import_name, verifier)
+        self.assertIn("raw.githubusercontent.com", verifier)
+        self.assertIn("curl -q --proto '=https'", verifier)
+        self.assertIn("cmp -s", verifier)
+        self.assertIn("RECIPE_RELEASE_REF", verifier)
+        self.assertNotIn("Authorization:", verifier)
+        self.assertNotRegex(verifier, r"\b(?:TOKEN|PASSWORD|SECRET)=")
 
 
 if __name__ == "__main__":

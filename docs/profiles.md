@@ -18,14 +18,14 @@ The machine-readable descriptors in [`profiles/`](../profiles/) are the source o
 
 Use one of these version-controlled sources in Zerops' **Import a project** screen:
 
-- Full: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/v0.1.0/import.yaml`
-- Compact production: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/v0.1.0/import.production.yaml`
-- Minimal staging: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/v0.1.0/import.staging.yaml`
+- Full: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/0f3ddf700174be7cb71b158317b51151db4de6cf/import.yaml`
+- Compact production: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/0f3ddf700174be7cb71b158317b51151db4de6cf/import.production.yaml`
+- Minimal staging: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/0f3ddf700174be7cb71b158317b51151db4de6cf/import.staging.yaml`
 
-These URLs are pinned to the immutable `v0.1.0` release that passed the
-recorded static and live acceptance gates. Use a newer release tag only after
-its own clean-room validation; `main` is intentionally not the publishing
-endpoint.
+These URLs are pinned to the full immutable commit SHA that passed the recorded
+static and live acceptance gates. Release tags remain human-friendly aliases;
+only a newly tested full commit SHA may replace these publishing endpoints.
+`main` is intentionally not the publishing endpoint.
 
 Equivalent zCLI commands after downloading the selected file are:
 
@@ -39,14 +39,14 @@ These commands create separate projects. Run only the command for the desired to
 
 ## Publishing checklist
 
-Before publishing a release or changing the raw links to a release tag:
+Before publishing a release or changing the raw links to a tested commit:
 
 1. Validate all three imports against Zerops' public import schema and ensure each exact service inventory matches its profile descriptor.
 2. Render all shared setup references and prove that an import never references a service absent from that profile.
 3. Run the repository's workflow/profile contract test and secret scan.
 4. Run static clean-room validation for all profiles.
 5. Run the live staging and production acceptance sequence when the release is intended to carry live-tested status.
-6. Tag the tested commit, substitute the immutable tag for `main` in published catalog links, and verify all three raw URLs return that commit's files.
+6. Pin catalog links to the tested full 40-character commit SHA, verify all three URLs without authentication and compare their bytes, then optionally add a protected release tag as a human-friendly alias.
 7. State explicitly that `production` has a single control plane and `staging` has no durable backup.
 
 The import files may contain Zerops preprocessor expressions that generate secrets during import. They must never contain a rendered token, key, kubeconfig, password, connection string, or encrypted-secret payload copied from a live project.
