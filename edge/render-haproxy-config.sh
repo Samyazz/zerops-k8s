@@ -3,6 +3,14 @@ set -eu
 
 config_path=${HAPROXY_CONFIG_PATH:-/home/zerops/haproxy.cfg}
 dsr_hostname=${K8S_DSR_HOSTNAME:-_dsr.k8sedge.zerops}
+dns_server=${K8S_EDGE_DNS_SERVER:-$(awk '$1 == "nameserver" {print $2; exit}' /etc/resolv.conf)}
+
+case "$dns_server" in
+  ''|*[!0-9.]*)
+    printf 'K8S_EDGE_DNS_SERVER must be an IPv4 address\n' >&2
+    exit 1
+    ;;
+esac
 
 bool_value() {
   key=$1
@@ -53,7 +61,8 @@ write_servers() {
       printf 'backend port is outside 1-65535: %s\n' "$port" >&2
       exit 1
     fi
-    printf '    server %s%d %s:%s check %s\n' "$prefix" "$index" "$host" "$port" "$check_options"
+    printf '    server %s%d %s:%s check %s resolvers zerops_dns resolve-prefer ipv4 init-addr libc,none\n' \
+      "$prefix" "$index" "$host" "$port" "$check_options"
     index=$((index + 1))
   done
 }
@@ -76,6 +85,14 @@ global
     log stdout format raw local0 info
     maxconn 4096
     stats socket /home/zerops/haproxy-runtime.sock mode 600 level admin
+
+resolvers zerops_dns
+    nameserver zerops ${dns_server}:53
+    resolve_retries 3
+    timeout resolve 1s
+    timeout retry 1s
+    hold valid 5s
+    hold obsolete 5s
 
 defaults
     log global

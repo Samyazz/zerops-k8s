@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net"
 	"strings"
@@ -119,8 +120,9 @@ func TestEnsureAPIServerDSRSANIsAtomicAndIdempotent(t *testing.T) {
 	}
 	joined := runner.joinedCommands()
 	if !strings.Contains(joined, "mktemp /etc/kubernetes/pki/.apiserver.crt") ||
-		!strings.Contains(joined, "crictl ps --name kube-apiserver") ||
-		!strings.Contains(joined, "crictl stop") {
+		!strings.Contains(joined, "ctr -n k8s.io containers list") ||
+		!strings.Contains(joined, "ctr -n k8s.io tasks kill --signal SIGTERM") ||
+		!strings.Contains(joined, "openssl x509 -in \"$certificate\" -noout -checkhost") {
 		t.Fatalf("atomic update or API restart command is incomplete: %s", joined)
 	}
 	firstCommandCount := len(runner.commands)
@@ -128,19 +130,26 @@ func TestEnsureAPIServerDSRSANIsAtomicAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated || len(runner.commands) != firstCommandCount+1 {
+	if updated || len(runner.commands) != firstCommandCount+2 {
 		t.Fatalf("second reconciliation was not idempotent: updated=%v commands=%#v", updated, runner.commands)
 	}
 }
 
 type certificateRunner struct {
-	commands []recordedCommand
-	files    map[string]string
+	commands   []recordedCommand
+	files      map[string]string
+	servingDSR bool
 }
 
 func (r *certificateRunner) run(_ context.Context, name string, args []string, stdin string) (string, error) {
 	r.commands = append(r.commands, recordedCommand{name: name, args: append([]string(nil), args...)})
 	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "openssl s_client -connect 127.0.0.1:6443") {
+		if r.servingDSR {
+			return "", nil
+		}
+		return "", errors.New("serving certificate has not reloaded")
+	}
 	for filename, contents := range r.files {
 		if strings.HasSuffix(joined, "/etc/kubernetes/pki/"+filename) && strings.Contains(joined, " cat ") {
 			return contents, nil
@@ -148,6 +157,9 @@ func (r *certificateRunner) run(_ context.Context, name string, args []string, s
 	}
 	if strings.Contains(joined, "mktemp /etc/kubernetes/pki/.apiserver.crt") {
 		r.files["apiserver.crt"] = stdin
+	}
+	if strings.Contains(joined, "ctr -n k8s.io tasks kill --signal SIGTERM") {
+		r.servingDSR = true
 	}
 	return "", nil
 }

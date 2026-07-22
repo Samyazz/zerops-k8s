@@ -28,6 +28,8 @@ class HAProxyEdgeTests(unittest.TestCase):
         self.assertIn("https://_dsr.k8sedge.zerops:6443", config)
         self.assertIn("option httpchk GET /readyz HTTP/1.1", config)
         self.assertIn("check-ssl verify none", config)
+        self.assertIn("resolvers zerops_dns", config)
+        self.assertIn("resolve-prefer ipv4 init-addr libc,none", config)
         self.assertEqual(config.count("server cp"), 3)
         self.assertEqual(config.count("server worker"), 3)
         self.assertEqual(config.count("server headlamp"), 3)
@@ -46,6 +48,7 @@ class HAProxyEdgeTests(unittest.TestCase):
     def test_config_injection_and_disabled_api_are_rejected(self):
         for environment in (
             {"K8S_EDGE_API_BACKENDS": "k8scp1:6443\nfrontend injected"},
+            {"K8S_EDGE_DNS_SERVER": "10.0.0.1\nfrontend injected"},
             {"K8S_EDGE_API_ENABLED": "false"},
         ):
             with self.subTest(environment=environment):

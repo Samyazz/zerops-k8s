@@ -15,6 +15,8 @@ Use the correct VPN-only endpoint:
 
 - Every profile: `https://_dsr.k8sedge.zerops:6443`; first check `http://k8sedge.zerops:18082/healthz`, then inspect HAProxy logs and backend state on both edge containers.
 
+HAProxy uses the Zerops resolver from `/etc/resolv.conf` with short DNS holds. After a node-container replacement, confirm the backend changes from `DOWN` to `UP`; a permanently stale address indicates that the edge resolver configuration did not load.
+
 The workflows connect with `zcli vpn up --mtu 1280`. If small responses work but kubeconfig or larger transfers stall, reconnect with the same MTU. Never disable TLS verification for routine access.
 
 An unavailable sole control plane is an expected API outage in `production` and `staging`, not a failover event. In `full`, check all three control-plane agents and edge backend health before declaring quorum loss.

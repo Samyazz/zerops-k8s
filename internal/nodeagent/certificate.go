@@ -30,51 +30,79 @@ func (a *agent) ensureAPIServerDSRSAN(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("parse API server certificate: %w", err)
 	}
-	if certificateHasDNSName(certificate, dsrAPIServerHostname) {
+	if certificateHasDNSName(certificate, dsrAPIServerHostname) && a.servingAPIServerHasDSRSAN(ctx) {
 		return false, nil
 	}
 
-	caCertificatePEM, err := a.readNestedPKIFile(ctx, "ca.crt")
-	if err != nil {
-		return false, fmt.Errorf("read Kubernetes CA certificate: %w", err)
-	}
-	caKeyPEM, err := a.readNestedPKIFile(ctx, "ca.key")
-	if err != nil {
-		return false, fmt.Errorf("read Kubernetes CA key: %w", err)
-	}
-	serverKeyPEM, err := a.readNestedPKIFile(ctx, "apiserver.key")
-	if err != nil {
-		return false, fmt.Errorf("read API server key: %w", err)
-	}
+	if !certificateHasDNSName(certificate, dsrAPIServerHostname) {
+		caCertificatePEM, err := a.readNestedPKIFile(ctx, "ca.crt")
+		if err != nil {
+			return false, fmt.Errorf("read Kubernetes CA certificate: %w", err)
+		}
+		caKeyPEM, err := a.readNestedPKIFile(ctx, "ca.key")
+		if err != nil {
+			return false, fmt.Errorf("read Kubernetes CA key: %w", err)
+		}
+		serverKeyPEM, err := a.readNestedPKIFile(ctx, "apiserver.key")
+		if err != nil {
+			return false, fmt.Errorf("read API server key: %w", err)
+		}
 
-	updatedPEM, err := addDNSNameToCertificate(
-		certificatePEM,
-		caCertificatePEM,
-		caKeyPEM,
-		serverKeyPEM,
-		dsrAPIServerHostname,
-		time.Now(),
-	)
-	if err != nil {
-		return false, err
-	}
-	if err := a.writeNestedAPIServerCertificate(ctx, updatedPEM); err != nil {
-		return false, fmt.Errorf("write API server certificate: %w", err)
+		updatedPEM, err := addDNSNameToCertificate(
+			certificatePEM,
+			caCertificatePEM,
+			caKeyPEM,
+			serverKeyPEM,
+			dsrAPIServerHostname,
+			time.Now(),
+		)
+		if err != nil {
+			return false, err
+		}
+		if err := a.writeNestedAPIServerCertificate(ctx, updatedPEM); err != nil {
+			return false, fmt.Errorf("write API server certificate: %w", err)
+		}
 	}
 
 	const restart = `
 set -eu
-container_id=$(crictl ps --name kube-apiserver -q | head -n 1)
+container_id=$(ctr -n k8s.io containers list | awk '$2 ~ /\/kube-apiserver:/ {print $1; exit}')
 test -n "$container_id"
-crictl stop "$container_id" >/dev/null
+ctr -n k8s.io tasks kill --signal SIGTERM "$container_id"
 `
 	if _, err := a.runner.run(ctx, "docker", []string{
 		"exec", a.cfg.ContainerName, "sh", "-ec", restart,
 	}, ""); err != nil {
 		return true, fmt.Errorf("restart kube-apiserver after DSR certificate update: %w", err)
 	}
-	log.Printf(`{"component":"node-agent","operation":"api-certificate-dsr-san","status":"updated"}`)
+	deadline := time.Now().Add(30 * time.Second)
+	for !a.servingAPIServerHasDSRSAN(ctx) {
+		if time.Now().After(deadline) {
+			return true, fmt.Errorf("kube-apiserver did not present the DSR certificate within 30 seconds")
+		}
+		select {
+		case <-ctx.Done():
+			return true, ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	log.Printf(`{"component":"node-agent","operation":"api-certificate-dsr-san","status":"reconciled"}`)
 	return true, nil
+}
+
+func (a *agent) servingAPIServerHasDSRSAN(ctx context.Context) bool {
+	const verify = `
+set -eu
+certificate=$(mktemp)
+trap 'rm -f "$certificate"' EXIT
+timeout 5 openssl s_client -connect 127.0.0.1:6443 -servername _dsr.k8sedge.zerops </dev/null 2>/dev/null \
+  | openssl x509 -outform PEM >"$certificate"
+openssl x509 -in "$certificate" -noout -checkhost _dsr.k8sedge.zerops >/dev/null
+`
+	_, err := a.runner.run(ctx, "docker", []string{
+		"exec", a.cfg.ContainerName, "sh", "-ec", verify,
+	}, "")
+	return err == nil
 }
 
 func (a *agent) readNestedPKIFile(ctx context.Context, name string) ([]byte, error) {
