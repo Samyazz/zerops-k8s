@@ -117,6 +117,24 @@ deploy_runtime_artifact() {
   die "prebuilt runtime deployment failed after three attempts: $service"
 }
 
+deploy_edge_artifact() {
+  local service=$1 setup=$2 attempt result
+  log "deploying HAProxy edge artifact to $service with setup $setup"
+  for attempt in 1 2 3; do
+    set +e
+    timeout "${ZEROPS_DEPLOY_TIMEOUT:-35m}" zcli service deploy "$service" -P "$ZEROPS_PROJECT_ID" \
+      --setup "$setup" --version-name "${version_name}-${service}-${attempt}" \
+      --working-dir "$ROOT_DIR" --path-to-file-or-dir edge
+    result=$?
+    set -e
+    (( result == 0 )) && return 0
+    (( result != 124 )) || die "Zerops HAProxy edge deployment timed out for $service"
+    log "HAProxy edge deployment failed on attempt $attempt; retrying $service"
+    sleep 5
+  done
+  die "HAProxy edge deployment failed after three attempts: $service"
+}
+
 needs_node_artifact=false
 while IFS= read -r service; do
   if service_selected "$service"; then
@@ -135,7 +153,7 @@ fi
 if [[ "$EDGE_ENABLED" == true ]] && service_selected "$EDGE_HOSTNAME"; then
   edge_setup=$(jq -er --arg hostname "$EDGE_HOSTNAME" \
     '.services[] | select(.hostname == $hostname) | .setup' "$PROFILE_FILE")
-  deploy_with_build "$EDGE_HOSTNAME" "$edge_setup"
+  deploy_edge_artifact "$EDGE_HOSTNAME" "$edge_setup"
 fi
 
 while IFS=$'\t' read -r service setup; do

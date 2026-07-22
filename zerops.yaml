@@ -357,7 +357,7 @@ zerops:
     build:
       base: go@1.22
       deployFiles:
-        - ./edge/~
+        - ./edge
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -400,7 +400,7 @@ zerops:
         httpGet:
           port: 18082
           path: /healthz
-      start: ./run-haproxy.sh
+      start: ./edge/run-haproxy.sh
 
   # Compact-production nodes retain the S3-backed image cache and recovery
   # storage, but deliberately carry no references to the full observability
@@ -519,7 +519,7 @@ zerops:
     build:
       base: go@1.22
       deployFiles:
-        - ./edge/~
+        - ./edge
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -549,7 +549,7 @@ zerops:
         httpGet:
           port: 18082
           path: /healthz
-      start: ./run-haproxy.sh
+      start: ./edge/run-haproxy.sh
 
   # Staging builds the pinned Docker image independently in each runtime. It
   # verifies both the resulting immutable image ID and kubeadm version before
@@ -634,7 +634,7 @@ zerops:
     build:
       base: go@1.22
       deployFiles:
-        - ./edge/~
+        - ./edge
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -664,7 +664,7 @@ zerops:
         httpGet:
           port: 18082
           path: /healthz
-      start: ./run-haproxy.sh
+      start: ./edge/run-haproxy.sh
 
   # These two setups customize Zerops' first-class Prometheus/Grafana recipe.
   # They stay outside Kubernetes; the cluster only ships telemetry to them.

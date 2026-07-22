@@ -355,7 +355,7 @@ class ProfileContractTests(unittest.TestCase):
                 block = setup_blocks[service["setup"]]
                 self.assertRegex(block, r"- (?:&installHAProxy \||\*installHAProxy)")
                 self.assertIn("K8S_DSR_HOSTNAME: _dsr.k8sedge.zerops", block)
-                self.assertIn("start: ./run-haproxy.sh", block)
+                self.assertIn("start: ./edge/run-haproxy.sh", block)
                 self.assertNotIn("K8S_MODE: edge", block)
                 self.assertNotIn("go build", block)
 

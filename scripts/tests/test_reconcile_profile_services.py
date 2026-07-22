@@ -197,7 +197,8 @@ class ReconcileProfileServicesFixtureTests(unittest.TestCase):
             self.assertEqual(len(calls), 2, calls)
             self.assertTrue(any("service deploy k8sworker2 " in call for call in calls))
             self.assertTrue(any("--setup worker2-production" in call for call in calls))
-            self.assertTrue(any(call.startswith("push k8sedge ") for call in calls))
+            self.assertTrue(any("service deploy k8sedge " in call for call in calls))
+            self.assertTrue(any("--path-to-file-or-dir edge" in call for call in calls))
             self.assertTrue(any("--setup edge-production" in call for call in calls))
             for untouched in ("k8scp1", "k8sworker1", "k8sbackups"):
                 self.assertFalse(any(f"service deploy {untouched} " in call for call in calls))
