@@ -18,9 +18,14 @@ The machine-readable descriptors in [`profiles/`](../profiles/) are the source o
 
 Use one of these version-controlled sources in Zerops' **Import a project** screen:
 
-- Full: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/main/import.yaml`
-- Compact production: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/main/import.production.yaml`
-- Minimal staging: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/main/import.staging.yaml`
+- Full: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/v0.1.0/import.yaml`
+- Compact production: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/v0.1.0/import.production.yaml`
+- Minimal staging: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/v0.1.0/import.staging.yaml`
+
+These URLs are pinned to the immutable `v0.1.0` release that passed the
+recorded static and live acceptance gates. Use a newer release tag only after
+its own clean-room validation; `main` is intentionally not the publishing
+endpoint.
 
 Equivalent zCLI commands after downloading the selected file are:
 

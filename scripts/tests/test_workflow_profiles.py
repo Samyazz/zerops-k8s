@@ -12,6 +12,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 PROFILES = ["full", "production", "staging"]
+RECIPE_RELEASE_REF = "v0.1.0"
 PROFILE_WORKFLOWS = [
     "backup.yml",
     "deploy.yml",
@@ -515,6 +516,582 @@ class WorkflowProfileContractTests(unittest.TestCase):
                 self.assertGreater(sanitizer, -1)
                 self.assertGreater(upload, sanitizer)
 
+    def test_every_live_operation_streams_output_through_the_redactor(self):
+        mutation = re.compile(
+            r"zcli login|\./scripts/(?:backup-cluster|cancel-process|cleanup-failed-run|"
+            r"deploy|destroy-cluster|recover-node-agents|reconcile-profile-services|"
+            r"resize-cluster|restore-drill|rolling-update|upgrade-cluster)\.sh"
+        )
+        for name in (entry for entry in PROFILE_WORKFLOWS if entry != "deploy.yml"):
+            data = workflow(name)
+            for job_name, job in data["jobs"].items():
+                for step in job.get("steps", []):
+                    command = step.get("run", "")
+                    if not mutation.search(command):
+                        continue
+                    with self.subTest(workflow=name, job=job_name, step=step.get("name")):
+                        self.assertIn(
+                            "2>&1 | ./scripts/redact-evidence.sh",
+                            command,
+                            "live operation output would reach the public Actions log unredacted",
+                        )
+
+    def test_secrets_are_step_scoped_and_every_secret_bearing_step_is_redacted(self):
+        for name in (entry for entry in PROFILE_WORKFLOWS if entry != "deploy.yml"):
+            data = workflow(name)
+            for job_name, job in data["jobs"].items():
+                with self.subTest(workflow=name, job=job_name):
+                    self.assertFalse(
+                        any("secrets." in value for value in job.get("env", {}).values()),
+                        "job-scoped secrets expose credentials to unrelated steps",
+                    )
+                for step in job.get("steps", []):
+                    secret_values = [
+                        value
+                        for value in step.get("env", {}).values()
+                        if "secrets." in value
+                    ]
+                    if not secret_values:
+                        continue
+                    command = step.get("run", "")
+                    with self.subTest(workflow=name, job=job_name, step=step.get("name")):
+                        self.assertIn("2>&1 | ./scripts/redact-evidence.sh", command)
+
+    def test_streaming_redaction_preserves_operation_failure(self):
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                "set -Eeuo pipefail; "
+                "{ printf 'source=10.20.30.40\\n'; exit 23; } "
+                "2>&1 | ./scripts/redact-evidence.sh",
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            env=os.environ,
+        )
+        self.assertEqual(result.returncode, 23)
+        self.assertNotIn("10.20.30.40", result.stdout)
+        self.assertIn("[REDACTED_IP]", result.stdout)
+
+    def test_redacted_json_arrays_remain_valid_and_hide_every_value(self):
+        fixtures = [
+            {"Authorization": ["Bearer array-authorization-secret"]},
+            {"Cookie": ["session=array-cookie-secret"]},
+            {"secret": ["array generic secret value"]},
+            {"ELASTIC_APM_SECRET_TOKEN": ["array-apm-token-value"]},
+            {
+                "Authorization": [
+                    "Bearer first-authorization-secret",
+                    "Basic second-authorization-secret",
+                ]
+            },
+            {
+                "Cookie": [
+                    "first-cookie=first-cookie-secret",
+                    "second-cookie=second-cookie-secret",
+                ]
+            },
+            {"secret": ["first-generic-secret", "second-generic-secret"]},
+            {
+                "Authorization": 'Digest username="digest-user", '
+                'nonce="digest-nonce"'
+            },
+            {"Cookie": 'quoted="cookie-secret"; other=next'},
+            {"password": 'part-one"part-two-secret'},
+            {"password": None},
+            {"access_token": 123456789},
+            {"api-key": False},
+        ]
+        result = subprocess.run(
+            [str(ROOT / "scripts" / "redact-evidence.sh")],
+            cwd=ROOT,
+            input="".join(
+                json.dumps(fixture, separators=separators) + "\n"
+                for fixture in fixtures
+                for separators in (None, (",", ":"))
+            ),
+            text=True,
+            capture_output=True,
+            check=True,
+            env=os.environ,
+        )
+        rendered = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(len(rendered), len(fixtures) * 2)
+        for index, document in enumerate(rendered):
+            value = next(iter(document.values()))
+            original = next(iter(fixtures[index // 2].values()))
+            expected = (
+                ["[REDACTED]"] * len(original)
+                if isinstance(original, list)
+                else "[REDACTED]"
+            )
+            self.assertEqual(value, expected)
+        for leaked in (
+            "array-authorization-secret",
+            "array-cookie-secret",
+            "array generic secret value",
+            "array-apm-token-value",
+            "digest-user",
+            "digest-nonce",
+            "cookie-secret",
+            "part-two-secret",
+            "first-authorization-secret",
+            "second-authorization-secret",
+            "first-cookie-secret",
+            "second-cookie-secret",
+            "first-generic-secret",
+            "second-generic-secret",
+            "123456789",
+        ):
+            self.assertNotIn(leaked, result.stdout)
+
+    def test_streaming_cleanup_preserves_signal_status_and_runs_once(self):
+        for signal, expected in (("INT", 130), ("TERM", 143)):
+            command = f"""
+                set -Eeuo pipefail
+                {{
+                  finish() {{
+                    status=$?
+                    trap - EXIT INT TERM
+                    printf 'cleanup:%s\\n' "$status"
+                    exit "$status"
+                  }}
+                  trap finish EXIT
+                  trap 'exit 130' INT
+                  trap 'exit 143' TERM
+                  kill -{signal} "$BASHPID"
+                }} 2>&1 | ./scripts/redact-evidence.sh
+            """
+            result = subprocess.run(
+                ["bash", "-c", command],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                env=os.environ,
+            )
+            with self.subTest(signal=signal):
+                self.assertEqual(result.returncode, expected)
+                self.assertEqual(result.stdout.count(f"cleanup:{expected}"), 1)
+
+    def test_structured_redaction_covers_header_aliases_and_secret_shapes(self):
+        provider_token_key = "_".join(("github", "pat", "x" * 32))
+        sensitive_values = {
+            "Proxy-Authorization": "Bearer proxy-authorization-value",
+            "proxy_authorization": "Basic proxy-underscore-value",
+            "http.request.header.authorization": "Bearer otel-auth-value",
+            "http.request.header.cookie": "session=otel-cookie-value",
+            "authorizationHeader": "Bearer camel-auth-value",
+            "proxyAuthorization": "Bearer camel-proxy-value",
+            "cookieHeader": "session=camel-cookie-value",
+            "setCookieHeader": "session=camel-set-cookie-value",
+            "K8S_CERTIFICATE_KEY": "certificate-key-value",
+            "K8S_ENCRYPTION_KEY": "encryption-key-value",
+            "K8S_RECOVERY_AGE_IDENTITY": "age-identity-value",
+            "K8S_ADMIN_KUBECONFIG_B64_RUN_123": "kubeconfig-value",
+            "SSH_PRIVATE_KEY": "private-key-value",
+            "databaseCredential": "credential-value",
+            "Client Secret": "spaced-client-secret-value",
+            "Access Token": "spaced-access-token-value",
+            "Database Password": "spaced-database-password-value",
+            "Private Key": "spaced-private-key-value",
+            "Encryption Key": "spaced-encryption-key-value",
+            "Age Identity": "spaced-age-identity-value",
+            "Kube Config": "spaced-kubeconfig-value",
+            "Client Certificate Data": "spaced-client-certificate-value",
+            "Client Key Data": "spaced-client-key-value",
+            "API Key Value": "spaced-api-key-suffix-value",
+            "Access Key ID Value": "spaced-access-key-suffix-value",
+        }
+        fixture = {
+            **sensitive_values,
+            "client_secret": {
+                provider_token_key: "secret-leaf",
+                "copies": ["copy-one", None, False],
+            },
+        }
+        result = subprocess.run(
+            [str(ROOT / "scripts" / "redact-evidence.sh")],
+            cwd=ROOT,
+            input=json.dumps(fixture) + "\n",
+            text=True,
+            capture_output=True,
+            check=True,
+            env=os.environ,
+        )
+        rendered = json.loads(result.stdout)
+        for key in sensitive_values:
+            self.assertEqual(rendered[key], "[REDACTED]")
+        self.assertNotIn(provider_token_key, json.dumps(rendered))
+        self.assertEqual(
+            rendered["client_secret"],
+            {
+                "[REDACTED_TOKEN]": "[REDACTED]",
+                "copies": ["[REDACTED]", "[REDACTED]", "[REDACTED]"],
+            },
+        )
+        for leaked in (*sensitive_values.values(), provider_token_key, "secret-leaf"):
+            self.assertNotIn(leaked, result.stdout)
+
+    def test_document_redaction_handles_pretty_json_and_rejects_secret_objects(self):
+        pretty = {
+            "headers": {
+                "Authorization": [
+                    "Bearer pretty-first-value",
+                    "Basic pretty-second-value",
+                ],
+                "Cookie": [
+                    "session=pretty-cookie-one",
+                    "csrf=pretty-cookie-two",
+                ],
+            },
+            "client_secret": {
+                "primary": "pretty-nested-secret",
+                "copies": [None, 7, False],
+            },
+        }
+        result = subprocess.run(
+            [str(ROOT / "scripts" / "redact-evidence.sh"), "--document"],
+            cwd=ROOT,
+            input=json.dumps(pretty, indent=2) + "\n",
+            text=True,
+            capture_output=True,
+            check=True,
+            env=os.environ,
+        )
+        rendered = json.loads(result.stdout)
+        self.assertEqual(
+            rendered["headers"]["Authorization"],
+            ["[REDACTED]", "[REDACTED]"],
+        )
+        self.assertEqual(
+            rendered["headers"]["Cookie"],
+            ["[REDACTED]", "[REDACTED]"],
+        )
+        self.assertEqual(
+            rendered["client_secret"],
+            {
+                "primary": "[REDACTED]",
+                "copies": ["[REDACTED]", "[REDACTED]", "[REDACTED]"],
+            },
+        )
+        for leaked in (
+            "pretty-first-value",
+            "pretty-second-value",
+            "pretty-cookie-one",
+            "pretty-cookie-two",
+            "pretty-nested-secret",
+        ):
+            self.assertNotIn(leaked, result.stdout)
+
+        streamed = subprocess.run(
+            [str(ROOT / "scripts" / "redact-evidence.sh")],
+            cwd=ROOT,
+            input=json.dumps(pretty, indent=2) + "\n",
+            text=True,
+            capture_output=True,
+            check=True,
+            env=os.environ,
+        )
+        streamed_json = json.loads(streamed.stdout)
+        self.assertEqual(
+            streamed_json["headers"]["Authorization"],
+            "[REDACTED]",
+        )
+        self.assertEqual(streamed_json["client_secret"], "[REDACTED]")
+        for leaked in (
+            "pretty-first-value",
+            "pretty-second-value",
+            "pretty-cookie-one",
+            "pretty-cookie-two",
+            "pretty-nested-secret",
+        ):
+            self.assertNotIn(leaked, streamed.stdout)
+
+        for secret_stream in (
+            (
+                "apiVersion: v1\n"
+                "data:\n"
+                "  arbitrary: streaming-yaml-before-kind\n"
+                "kind: 'Secret'\n"
+                "---\n"
+                "kind: ConfigMap\n"
+                "data:\n"
+                "  safe: retained-after-secret\n"
+            ),
+            json.dumps(
+                {
+                    "apiVersion": "v1",
+                    "data": {"arbitrary": "streaming-json-before-kind"},
+                    "kind": "Secret",
+                },
+                indent=2,
+            )
+            + "\n",
+        ):
+            secret_result = subprocess.run(
+                [str(ROOT / "scripts" / "redact-evidence.sh")],
+                cwd=ROOT,
+                input=secret_stream,
+                text=True,
+                capture_output=True,
+                check=True,
+                env=os.environ,
+            )
+            self.assertIn(
+                "[REDACTED_KUBERNETES_SECRET]",
+                secret_result.stdout,
+            )
+            self.assertNotIn("streaming-yaml-secret", secret_result.stdout)
+            self.assertNotIn("streaming-json-secret", secret_result.stdout)
+            self.assertNotIn("streaming-yaml-before-kind", secret_result.stdout)
+            self.assertNotIn("streaming-json-before-kind", secret_result.stdout)
+            if secret_stream.lstrip().startswith("{"):
+                json.loads(secret_result.stdout)
+
+        yaml_fixture = {
+            "password": ["yaml-first-password", "yaml-second-password"],
+            "client_secret": {
+                "primary": "yaml-primary-secret",
+                "copies": ["yaml-copy-secret", None],
+            },
+            "K8S_ENCRYPTION_KEY": "yaml multi word encryption value",
+            "safe": "retained",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            yaml_path = Path(tmp) / "credentials.yaml"
+            yaml_path.write_text(
+                yaml.safe_dump(yaml_fixture, sort_keys=False),
+                encoding="utf-8",
+            )
+            sanitized = subprocess.run(
+                [str(ROOT / "scripts" / "sanitize-evidence-tree.sh"), tmp],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                env=os.environ,
+            )
+            self.assertEqual(sanitized.returncode, 0, sanitized.stderr)
+            rendered_yaml = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                rendered_yaml,
+                {
+                    "password": ["[REDACTED]", "[REDACTED]"],
+                    "client_secret": {
+                        "primary": "[REDACTED]",
+                        "copies": ["[REDACTED]", "[REDACTED]"],
+                    },
+                    "K8S_ENCRYPTION_KEY": "[REDACTED]",
+                    "safe": "retained",
+                },
+            )
+
+        text_fixture = (
+            "password:\n"
+            "  - text-first-password\n"
+            "  - text-second-password\n"
+            "client_secret:\n"
+            "  primary: text-nested-secret\n"
+            "K8S_ENCRYPTION_KEY: text multi word encryption value\n"
+            "password: |2\n"
+            "  block-indent-secret\n"
+            "client_secret: |-2\n"
+            "  block-chomp-indent-secret\n"
+            "K8S_ENCRYPTION_KEY: |2-\n"
+            "  block-indent-chomp-secret\n"
+            "password: >4\n"
+            "    folded-indent-secret\n"
+            "client_secret: >+3\n"
+            "   folded-chomp-indent-secret\n"
+            "K8S_ENCRYPTION_KEY: >3+\n"
+            "   folded-indent-chomp-secret\n"
+            "password: |2 # block header comment\n"
+            "  commented-block-secret\n"
+            "client_secret: # nested mapping comment\n"
+            "  primary: comment-nested-secret\n"
+            "password: first-plain-secret\n"
+            "  continued-plain-secret\n"
+            'client_secret: "first-quoted-secret\n'
+            '  continued-quoted-secret"\n'
+            "- password: |2\n"
+            "    sequence-block-secret\n"
+            "- client_secret:\n"
+            "    primary: sequence-map-secret\n"
+            "safe-boundary: retained\n"
+            "outer:\n"
+            "  - password: >-\n"
+            "      nested-sequence-secret\n"
+            "- - password: |2\n"
+            "      double-sequence-secret\n"
+            "  - - client_secret:\n"
+            "        primary: triple-sequence-secret\n"
+            "? password\n"
+            ": explicit-complex-key-secret\n"
+            '? "password"\n'
+            ": |\n"
+            "  quoted-complex-key-secret\n"
+            "? 'client_secret'\n"
+            ": |\n"
+            "  singlequoted-complex-key-secret\n"
+            "Client Secret: |\n"
+            "  spaced-multiline-secret\n"
+            "Access Token:\n"
+            "  nested-spaced-token\n"
+            "- Database Password: >-\n"
+            "    nested-spaced-password\n"
+            "safe text remains\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            text_path = Path(tmp) / "credentials.txt"
+            text_path.write_text(text_fixture, encoding="utf-8")
+            sanitized = subprocess.run(
+                [str(ROOT / "scripts" / "sanitize-evidence-tree.sh"), tmp],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                env=os.environ,
+            )
+            self.assertEqual(sanitized.returncode, 0, sanitized.stderr)
+            rendered_text = text_path.read_text(encoding="utf-8")
+            for leaked in (
+                "text-first-password",
+                "text-second-password",
+                "text-nested-secret",
+                "text multi word encryption value",
+                "block-indent-secret",
+                "block-chomp-indent-secret",
+                "block-indent-chomp-secret",
+                "folded-indent-secret",
+                "folded-chomp-indent-secret",
+                "folded-indent-chomp-secret",
+                "commented-block-secret",
+                "comment-nested-secret",
+                "first-plain-secret",
+                "continued-plain-secret",
+                "first-quoted-secret",
+                "continued-quoted-secret",
+                "sequence-block-secret",
+                "sequence-map-secret",
+                "nested-sequence-secret",
+                "double-sequence-secret",
+                "triple-sequence-secret",
+                "explicit-complex-key-secret",
+                "quoted-complex-key-secret",
+                "singlequoted-complex-key-secret",
+                "spaced-multiline-secret",
+                "nested-spaced-token",
+                "nested-spaced-password",
+            ):
+                self.assertNotIn(leaked, rendered_text)
+            self.assertIn("safe text remains", rendered_text)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            outside = Path(tmp).parent / "zerops-k8s-symlink-target.txt"
+            outside.write_text("symlink-secret-value", encoding="utf-8")
+            try:
+                (Path(tmp) / "evidence-link").symlink_to(outside)
+                rejected = subprocess.run(
+                    [str(ROOT / "scripts" / "sanitize-evidence-tree.sh"), tmp],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                    env=os.environ,
+                )
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn("refusing non-regular evidence entry", rejected.stderr)
+                self.assertNotIn("symlink-secret-value", rejected.stderr)
+            finally:
+                outside.unlink(missing_ok=True)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            malformed = Path(tmp) / "malformed.yaml"
+            malformed.write_text(
+                "password: !vault |\n"
+                "  malformed-custom-yaml-secret\n"
+                "  second-malformed-secret\n",
+                encoding="utf-8",
+            )
+            rejected = subprocess.run(
+                [str(ROOT / "scripts" / "sanitize-evidence-tree.sh"), tmp],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                env=os.environ,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("refusing invalid or unsupported YAML evidence", rejected.stderr)
+            self.assertNotIn("malformed-custom-yaml-secret", rejected.stderr)
+            self.assertNotIn("second-malformed-secret", rejected.stderr)
+
+        for filename, payload in (
+            (
+                "secret.json",
+                json.dumps(
+                    {
+                        "apiVersion": "v1",
+                        "kind": "Secret",
+                        "data": {"arbitrary": "bm90LXJlYWwtc2VjcmV0"},
+                    }
+                ),
+            ),
+            (
+                "secret-list.json",
+                json.dumps(
+                    {
+                        "apiVersion": "v1",
+                        "kind": "SecretList",
+                        "items": [{"data": {"arbitrary": "list-secret-value"}}],
+                    }
+                ),
+            ),
+            (
+                "secret.ndjson",
+                '{"kind":"ConfigMap","data":{"safe":"value"}}\n'
+                '{"kind":"Secret","data":{"arbitrary":"ndjson-secret-value"}}\n',
+            ),
+            (
+                "secret.yaml",
+                "apiVersion: v1\nkind: Secret\ndata:\n  arbitrary: placeholder\n",
+            ),
+            (
+                "secret-list.yaml",
+                "apiVersion: v1\nkind: SecretList\nitems: []\n",
+            ),
+            (
+                "secret.txt",
+                "apiVersion: v1\n"
+                "kind: Secret\n"
+                "data:\n"
+                "  arbitrary: text-secret-object-value\n",
+            ),
+        ):
+            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / filename
+                path.write_text(payload, encoding="utf-8")
+                rejected = subprocess.run(
+                    [str(ROOT / "scripts" / "sanitize-evidence-tree.sh"), tmp],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                    env=os.environ,
+                )
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn("refusing Kubernetes Secret evidence", rejected.stderr)
+                self.assertNotIn("bm90LXJlYWwtc2VjcmV0", rejected.stderr)
+                self.assertNotIn("ndjson-secret-value", rejected.stderr)
+                self.assertNotIn("list-secret-value", rejected.stderr)
+                self.assertNotIn("text-secret-object-value", rejected.stderr)
+
+    def test_no_cleanup_trap_handles_exit_and_signals_with_one_handler(self):
+        for path in [*ROOT.glob("scripts/*.sh"), *WORKFLOW_DIR.glob("*.yml")]:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.relative_to(ROOT)):
+                self.assertNotRegex(
+                    text,
+                    r"trap\s+(?!-)[^\n]*\bEXIT\s+INT\s+TERM\b",
+                )
+
     def test_deploy_discards_encrypted_recovery_archives_before_sanitizing(self):
         text = workflow_text("reusable-deploy.yml")
         discard = text.index("-name '*.age' -delete")
@@ -523,13 +1100,84 @@ class WorkflowProfileContractTests(unittest.TestCase):
         self.assertLess(discard, sanitizer)
         self.assertLess(sanitizer, upload)
 
+    def test_artifact_upload_requires_successful_sanitization(self):
+        expected_gate = "${{ always() && steps.sanitize_evidence.outcome == 'success' }}"
+        for name in (entry for entry in PROFILE_WORKFLOWS if entry != "deploy.yml"):
+            data = workflow(name)
+            for job_name, job in data["jobs"].items():
+                steps = job.get("steps", [])
+                uploads = [
+                    (index, step)
+                    for index, step in enumerate(steps)
+                    if step.get("uses", "").startswith("actions/upload-artifact@")
+                ]
+                for upload_index, upload in uploads:
+                    sanitizers = [
+                        (index, step)
+                        for index, step in enumerate(steps[:upload_index])
+                        if "sanitize-evidence-tree.sh" in step.get("run", "")
+                    ]
+                    with self.subTest(
+                        workflow=name,
+                        job=job_name,
+                        upload=upload.get("name"),
+                    ):
+                        self.assertTrue(sanitizers)
+                        sanitizer_index, sanitizer = sanitizers[-1]
+                        self.assertLess(sanitizer_index, upload_index)
+                        self.assertEqual(sanitizer.get("id"), "sanitize_evidence")
+                        self.assertEqual(sanitizer.get("if"), "always()")
+                        self.assertEqual(upload.get("if"), expected_gate)
+
     def test_redactor_removes_required_sensitive_classes(self):
+        aws_access_id = "AK" + "IAIOSFODNN7EXAMPLE"
+        github_token = "github" + "_pat_1234567890abcdefghijklmnop"
+        classic_github_token = "gh" + "p_1234567890abcdefghijklmnopqrstuv"
+        age_identity = "AGE-" + "SECRET-KEY-1EXAMPLELONGIDENTITY"
+        private_key_begin = "-----BEGIN " + "PRIVATE KEY-----"
+        private_key_end = "-----END " + "PRIVATE KEY-----"
+        kube_key_field = "-".join(("client", "key", "data"))
+        kube_certificate_field = "-".join(("client", "certificate", "data"))
         sample = (
             "Authorization: Bearer abc.def.ghi\n"
+            "Authorization: Basic dXNlcjpwYXNzd29yZA==\n"
+            'headers={"Authorization":["Bearer array-token-value"]}\n'
+            "Authorization: AWS4-HMAC-SHA256 Credential=aws4-example/20260722/eu/s3/aws4_request, SignedHeaders=host, Signature=aws4-signature\n"
+            'Authorization: Digest username="digest-user", nonce="digest-nonce", response="digest-response"\n'
+            'headers={"Authorization":["Custom custom-secret with-spaces"]}\n'
             "Cookie: session=secret-cookie; csrf=second-cookie-secret\n"
             "Set-Cookie: auth=another-secret\n"
             'headers={"Cookie":"signed=quoted-cookie-secret; theme=dark"}\n'
             "token=token-value password: pass-value secret='secret-value'\n"
+            "ZEROPS_TOKEN=zerops-secret-value\n"
+            'ELASTICSEARCH_PASSWORD="multi word password value"\n'
+            "ELASTIC_APM_SECRET_TOKEN=elastic-apm-token-value\n"
+            "SECRET_TOKEN=generic-secret-token-value\n"
+            "access_token=access-token-value\n"
+            "refresh_token=refresh-token-value\n"
+            "client_secret=client-secret-value\n"
+            "api_key=api-key-value\n"
+            "[app] password: prefixed multi word password value\n"
+            "level=error client_secret=prefixed multi word client secret\n"
+            "[node] K8S_ENCRYPTION_KEY: prefixed multi word encryption key\n"
+            "[app] Client Secret: prefixed spaced client secret\n"
+            "level=error Access Token: prefixed spaced access token\n"
+            "[app] Database Password: |\n"
+            "  prefixed-spaced-block-password\n"
+            "service_accessKeyId=service-access-key-value\n"
+            "S3_ACCESS_KEY=s3-access-key-value\n"
+            "K8S_SIGNING_KEY=signing-key-value\n"
+            "TLS_KEY=tls-key-value\n"
+            f"AWS_ACCESS_KEY_ID={aws_access_id}\n"
+            "AWS_SECRET_ACCESS_KEY=aws-secret-value\n"
+            f"{kube_key_field}: Y2xpZW50LXByaXZhdGUta2V5\n"
+            f"{kube_certificate_field}: Y2xpZW50LWNlcnRpZmljYXRl\n"
+            f"{github_token}\n"
+            f"{classic_github_token}\n"
+            f"{age_identity}\n"
+            f"{private_key_begin}\n"
+            "cHJpdmF0ZS1rZXktbWF0ZXJpYWw=\n"
+            f"{private_key_end}\n"
             "owner@example.invalid connected from 203.0.113.42, 2001:db8::42, "
             "::1, and 2001:0db8:85a3:0000:0000:8a2e:0370:7334\n"
             'timestamp="2026-07-22T07:58:28.607822Z"\n'
@@ -545,6 +1193,15 @@ class WorkflowProfileContractTests(unittest.TestCase):
         )
         for sensitive in (
             "abc.def.ghi",
+            "dXNlcjpwYXNzd29yZA==",
+            "array-token-value",
+            "aws4-example",
+            "aws4-signature",
+            "digest-user",
+            "digest-nonce",
+            "digest-response",
+            "custom-secret",
+            "with-spaces",
             "secret-cookie",
             "second-cookie-secret",
             "another-secret",
@@ -552,6 +1209,32 @@ class WorkflowProfileContractTests(unittest.TestCase):
             "token-value",
             "pass-value",
             "secret-value",
+            "zerops-secret-value",
+            "multi word password value",
+            "elastic-apm-token-value",
+            "generic-secret-token-value",
+            "access-token-value",
+            "refresh-token-value",
+            "client-secret-value",
+            "api-key-value",
+            "prefixed multi word password value",
+            "prefixed multi word client secret",
+            "prefixed multi word encryption key",
+            "prefixed spaced client secret",
+            "prefixed spaced access token",
+            "prefixed-spaced-block-password",
+            "service-access-key-value",
+            "s3-access-key-value",
+            "signing-key-value",
+            "tls-key-value",
+            aws_access_id,
+            "aws-secret-value",
+            "Y2xpZW50LXByaXZhdGUta2V5",
+            "Y2xpZW50LWNlcnRpZmljYXRl",
+            github_token,
+            classic_github_token,
+            age_identity,
+            "cHJpdmF0ZS1rZXktbWF0ZXJpYWw=",
             "owner@example.invalid",
             "203.0.113.42",
             "2001:db8::42",
@@ -562,6 +1245,7 @@ class WorkflowProfileContractTests(unittest.TestCase):
         self.assertIn("[REDACTED]", result.stdout)
         self.assertIn("[REDACTED_EMAIL]", result.stdout)
         self.assertIn("[REDACTED_IP]", result.stdout)
+        self.assertIn("[REDACTED_PRIVATE_KEY]", result.stdout)
         self.assertIn('timestamp="2026-07-22T07:58:28.607822Z"', result.stdout)
 
     def test_profile_documentation_covers_workflows_endpoints_and_imports(self):
@@ -576,9 +1260,16 @@ class WorkflowProfileContractTests(unittest.TestCase):
             self.assertIn(endpoint, readme)
             self.assertIn(endpoint, guide)
             import_name = "import.yaml" if profile == "full" else f"import.{profile}.yaml"
-            raw = f"https://raw.githubusercontent.com/Samyazz/zerops-k8s/main/{import_name}"
+            raw = (
+                "https://raw.githubusercontent.com/Samyazz/zerops-k8s/"
+                f"{RECIPE_RELEASE_REF}/{import_name}"
+            )
             self.assertIn(raw, readme)
             self.assertIn(raw, guide)
+        self.assertNotIn("raw.githubusercontent.com/Samyazz/zerops-k8s/main/", readme)
+        self.assertNotIn("raw.githubusercontent.com/Samyazz/zerops-k8s/main/", guide)
+        self.assertIn("immutable", readme)
+        self.assertIn("immutable", guide)
         self.assertRegex(readme, r"production` is not control-plane HA")
         self.assertIn("not three clusters intended to coexist in one project", guide)
 

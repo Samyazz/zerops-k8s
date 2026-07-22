@@ -54,8 +54,8 @@ Primary references:
 - [Zerops project cores and built-in logger/statistics](https://docs.zerops.io/features/infrastructure)
 - [Zerops scaling presets](https://docs.zerops.io/guides/scaling)
 - [Zerops development/stage lifecycle](https://docs.zerops.io/features/coding-agents)
-- [Official recipe normal import](https://github.com/zeropsio/recipe-laravel-jetstream/blob/main/zerops-project-import.yml)
-- [Official recipe production import](https://github.com/zeropsio/recipe-laravel-jetstream/blob/main/zerops-project-production-import.yml)
+- [Official recipe normal import](https://github.com/zeropsio/recipe-laravel-jetstream/blob/12ee27bf1a2e4dc855c77d7f80ea4639b4e1b73d/zerops-project-import.yml)
+- [Official recipe production import](https://github.com/zeropsio/recipe-laravel-jetstream/blob/12ee27bf1a2e4dc855c77d7f80ea4639b4e1b73d/zerops-project-production-import.yml)
 - [Kubernetes Ingress-NGINX retirement notice](https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/)
 - [Traefik Gateway API provider](https://doc.traefik.io/traefik/reference/install-configuration/providers/kubernetes/kubernetes-gateway/)
 
@@ -198,6 +198,16 @@ correctly failed when the IPv6 evidence redactor corrupted an RFC3339 timestamp
 used by the new log-freshness gate. Automated failure cleanup removed every
 recipe-owned staging service and preserved `zcp`; the redactor now has an exact
 timestamp-preservation regression test before live acceptance is retried.
+
+The pre-publication audit scanned the complete reachable Git history, every
+retained evidence artifact, and every historical Actions log. It found no
+credential, private key, kubeconfig, or personal e-mail leak. One obsolete
+failed-run artifact contained encrypted recovery archives, and four superseded
+staging artifacts plus historical Action logs contained unredacted internal
+addresses; those payloads were deleted while their run conclusions were
+preserved. All live-operation workflow output now passes through the same
+tested streaming redactor with `pipefail`, independently of artifact
+sanitization.
 
 | Profile / operation | Successful run | Result |
 |---|---|---|

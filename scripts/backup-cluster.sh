@@ -64,7 +64,9 @@ cleanup() {
   fi
   rm -rf "$work_dir"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 stream_pod_file() {
   local namespace=$1 pod=$2 remote_path=$3 destination=$4

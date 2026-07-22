@@ -1,17 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Evidence may contain application log lines rather than valid JSON, so redact as
-# a byte stream before parsing or archiving it. The patterns intentionally favor
-# false positives over leaking credentials or personal data.
-sed -E \
-  -e "s/(Authorization[\"':= ]+)(Bearer[[:space:]]+)?[^,\"'[:space:]]+/\1[REDACTED]/Ig" \
-  -e "s/((Set-Cookie|Cookie)[\"']?[[:space:]]*:[[:space:]]*[\"'])[^\"']*/\1[REDACTED]/Ig" \
-  -e "s/((Set-Cookie|Cookie)[\"']?[[:space:]]*[:=][[:space:]]*)[^;,\"'[:space:]]+/\1[REDACTED]/Ig" \
-  -e "s/(;[[:space:]]*[[:alnum:]_.-]+[[:space:]]*=)[^;,\"'[:space:]]+/\1[REDACTED]/g" \
-  -e "s/(token|password|secret)([\"']?[[:space:]]*[:=][[:space:]]*[\"']?)[^,\"'[:space:]]+/\1\2[REDACTED]/Ig" \
-  -e 's/[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}/[REDACTED_EMAIL]/g' \
-  -e 's/(^|[^[:xdigit:]:])(([[:xdigit:]]{1,4}:){1,7}:([[:xdigit:]]{1,4}:){0,6}[[:xdigit:]]{0,4})([^[:xdigit:]:]|$)/\1[REDACTED_IP]\5/g' \
-  -e 's/(^|[^[:xdigit:]:])(::([[:xdigit:]]{1,4}:){0,6}[[:xdigit:]]{0,4})([^[:xdigit:]:]|$)/\1[REDACTED_IP]\4/g' \
-  -e 's/(^|[^[:xdigit:]:])(([[:xdigit:]]{1,4}:){3,7}[[:xdigit:]]{1,4})([^[:xdigit:]:]|$)/\1[REDACTED_IP]\4/g' \
-  -e 's/(^|[^[:digit:]])(([0-9]{1,3}\.){3}[0-9]{1,3})([^[:digit:]]|$)/\1[REDACTED_IP]\4/g'
+ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
+
+# Operation output stays streaming and bounded in memory. Evidence files pass
+# --document so pretty-printed JSON is parsed as one structure before the same
+# fallback stream filter handles NDJSON or text.
+exec python3 "$ROOT_DIR/scripts/redact_stream.py" "$@"

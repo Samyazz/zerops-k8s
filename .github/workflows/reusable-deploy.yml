@@ -32,13 +32,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:
-      ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_CLIENT_ID: ${{ vars.ZEROPS_CLIENT_ID }}
       K8S_PROFILE: ${{ inputs.profile }}
       RUN_FULL_CONFORMANCE: ${{ inputs.run_full_conformance }}
       K8S_RECOVERY_AGE_RECIPIENT: ${{ vars.K8S_RECOVERY_AGE_RECIPIENT }}
-      K8S_RECOVERY_AGE_IDENTITY: ${{ secrets.K8S_RECOVERY_AGE_IDENTITY }}
     steps:
       - name: Check out the exact requested revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -67,11 +65,20 @@ jobs:
 
       - name: Authenticate to Zerops
         shell: bash
-        run: zcli login "$ZEROPS_TOKEN"
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          set -o pipefail
+          zcli login "$ZEROPS_TOKEN" 2>&1 | ./scripts/redact-evidence.sh
 
       - name: Provision, deploy, test, and collect evidence
         shell: bash
-        run: ./scripts/deploy.sh
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          K8S_RECOVERY_AGE_IDENTITY: ${{ secrets.K8S_RECOVERY_AGE_IDENTITY }}
+        run: |
+          set -o pipefail
+          ./scripts/deploy.sh 2>&1 | ./scripts/redact-evidence.sh
 
       - name: Record sanitized resolved profile contract
         if: always()
@@ -84,6 +91,7 @@ jobs:
             >"$RUNNER_TEMP/evidence/profile-contract.json"
 
       - name: Sanitize acceptance evidence before upload
+        id: sanitize_evidence
         if: always()
         shell: bash
         run: |
@@ -93,7 +101,7 @@ jobs:
           ./scripts/sanitize-evidence-tree.sh "$RUNNER_TEMP/evidence"
 
       - name: Upload sanitized acceptance evidence
-        if: always()
+        if: ${{ always() && steps.sanitize_evidence.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: zerops-k8s-${{ inputs.profile }}-evidence-${{ github.run_id }}
@@ -107,7 +115,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       K8S_PROFILE: ${{ inputs.profile }}
     steps:
@@ -122,6 +129,11 @@ jobs:
 
       - name: Clean infrastructure owned by this failed run
         shell: bash
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: |
-          zcli login "$ZEROPS_TOKEN"
-          ./scripts/cleanup-failed-run.sh
+          set -Eeuo pipefail
+          {
+            zcli login "$ZEROPS_TOKEN"
+            ./scripts/cleanup-failed-run.sh
+          } 2>&1 | ./scripts/redact-evidence.sh

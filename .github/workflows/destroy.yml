@@ -30,7 +30,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
-      ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       K8S_PROFILE: ${{ inputs.profile }}
       STUCK_PROCESS_ID: ${{ inputs.stuck_process_id }}
@@ -49,24 +48,29 @@ jobs:
         run: ./scripts/install-tools.sh
       - name: Destroy the repository-managed cluster
         shell: bash
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: |
-          zcli login "$ZEROPS_TOKEN"
-          source ./scripts/lib.sh
-          live_profile=$(cluster_tag_value profile); live_profile=${live_profile:-full}
-          [[ "$live_profile" == "$K8S_PROFILE" ]] \
-            || die "selected profile $K8S_PROFILE does not match live profile $live_profile; no changes were made"
-          zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
-          trap 'zcli vpn down >/dev/null 2>&1 || true' EXIT
-          [[ -z "$STUCK_PROCESS_ID" ]] || ./scripts/cancel-process.sh "$STUCK_PROCESS_ID"
-          if [[ $(cluster_tag_value state) == cleanup-failed ]]; then
-            log 'cleanup-failed state has no trustworthy nested agents; purging recipe-owned outer services directly'
-            ./scripts/reconcile-profile-services.sh purge
-            set_cluster_state destroyed "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
-          else
-            ./scripts/recover-node-agents.sh
-            ./scripts/destroy-cluster.sh
-            ./scripts/reconcile-profile-services.sh purge
-          fi
+          set -Eeuo pipefail
+          {
+            zcli login "$ZEROPS_TOKEN"
+            source ./scripts/lib.sh
+            live_profile=$(cluster_tag_value profile); live_profile=${live_profile:-full}
+            [[ "$live_profile" == "$K8S_PROFILE" ]] \
+              || die "selected profile $K8S_PROFILE does not match live profile $live_profile; no changes were made"
+            zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
+            trap 'zcli vpn down >/dev/null 2>&1 || true' EXIT
+            [[ -z "$STUCK_PROCESS_ID" ]] || ./scripts/cancel-process.sh "$STUCK_PROCESS_ID"
+            if [[ $(cluster_tag_value state) == cleanup-failed ]]; then
+              log 'cleanup-failed state has no trustworthy nested agents; purging recipe-owned outer services directly'
+              ./scripts/reconcile-profile-services.sh purge
+              set_cluster_state destroyed "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            else
+              ./scripts/recover-node-agents.sh
+              ./scripts/destroy-cluster.sh
+              ./scripts/reconcile-profile-services.sh purge
+            fi
+          } 2>&1 | ./scripts/redact-evidence.sh
 
       - name: Record sanitized destroy evidence
         if: always()
@@ -81,12 +85,13 @@ jobs:
             "$PROFILE_FILE" >"$RUNNER_TEMP/evidence/profile-contract.json"
 
       - name: Sanitize destroy evidence before upload
+        id: sanitize_evidence
         if: always()
         shell: bash
         run: ./scripts/sanitize-evidence-tree.sh "$RUNNER_TEMP/evidence"
 
       - name: Upload sanitized destroy evidence
-        if: always()
+        if: ${{ always() && steps.sanitize_evidence.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: zerops-k8s-${{ env.K8S_PROFILE }}-destroy-evidence-${{ github.run_id }}

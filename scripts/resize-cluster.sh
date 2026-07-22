@@ -102,12 +102,14 @@ restore_cordon() {
     zcli service delete "$current_optional_worker" -P "$ZEROPS_PROJECT_ID" --confirm >/dev/null 2>&1 || true
   fi
 }
-trap restore_cordon EXIT INT TERM
+trap restore_cordon EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 service_inventory=$(mktemp)
 payload_file=$(mktemp)
 api_response=$(mktemp)
-trap 'restore_cordon; rm -f "$service_inventory" "$payload_file" "$api_response"' EXIT INT TERM
+trap 'restore_cordon; rm -f "$service_inventory" "$payload_file" "$api_response"' EXIT
 api_request_file GET "/project/${ZEROPS_PROJECT_ID}/service-stack?limit=100" '' "$service_inventory"
 
 service_present() {

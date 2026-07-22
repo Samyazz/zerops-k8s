@@ -28,7 +28,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:
-      ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_CLIENT_ID: ${{ vars.ZEROPS_CLIENT_ID }}
       K8S_PROFILE: ${{ inputs.profile || vars.K8S_PROFILE || 'full' }}
@@ -51,29 +50,37 @@ jobs:
 
       - name: Back up and roll one Kubernetes node at a time
         shell: bash
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: |
           set -Eeuo pipefail
-          vpn_connected=false
-          finish() {
-            status=$?
-            if [[ "$vpn_connected" == true ]]; then zcli vpn down >/dev/null 2>&1 || true; fi
-            exit "$status"
-          }
-          trap finish EXIT INT TERM
-          zcli login "$ZEROPS_TOKEN"
-          source ./scripts/lib.sh
-          live_profile=$(cluster_tag_value profile); live_profile=${live_profile:-full}
-          [[ "$live_profile" == "$K8S_PROFILE" ]] \
-            || die "selected profile $K8S_PROFILE does not match live profile $live_profile; no changes were made"
-          zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
-          vpn_connected=true
-          load_zerops_env
-          export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
-          agent_request k8scp1 GET /v1/cluster/kubeconfig >"$KUBECONFIG"
-          sed -i "s#^[[:space:]]*server:.*#    server: https://${CONTROL_PLANE_ENDPOINT}#" "$KUBECONFIG"
-          chmod 0600 "$KUBECONFIG"
-          kubectl get --raw=/readyz >/dev/null
-          ./scripts/rolling-update.sh
+          {
+            vpn_connected=false
+            # shellcheck disable=SC2317 # Invoked indirectly by the EXIT trap.
+            finish() {
+              status=$?
+              trap - EXIT INT TERM
+              if [[ "$vpn_connected" == true ]]; then zcli vpn down >/dev/null 2>&1 || true; fi
+              exit "$status"
+            }
+            trap finish EXIT
+            trap 'exit 130' INT
+            trap 'exit 143' TERM
+            zcli login "$ZEROPS_TOKEN"
+            source ./scripts/lib.sh
+            live_profile=$(cluster_tag_value profile); live_profile=${live_profile:-full}
+            [[ "$live_profile" == "$K8S_PROFILE" ]] \
+              || die "selected profile $K8S_PROFILE does not match live profile $live_profile; no changes were made"
+            zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
+            vpn_connected=true
+            load_zerops_env
+            export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
+            agent_request k8scp1 GET /v1/cluster/kubeconfig >"$KUBECONFIG"
+            sed -i "s#^[[:space:]]*server:.*#    server: https://${CONTROL_PLANE_ENDPOINT}#" "$KUBECONFIG"
+            chmod 0600 "$KUBECONFIG"
+            kubectl get --raw=/readyz >/dev/null
+            ./scripts/rolling-update.sh
+          } 2>&1 | ./scripts/redact-evidence.sh
 
       - name: Record sanitized resolved profile contract
         if: always()
@@ -86,12 +93,13 @@ jobs:
             >"$RUNNER_TEMP/evidence/profile-contract.json"
 
       - name: Sanitize rolling-update evidence before upload
+        id: sanitize_evidence
         if: always()
         shell: bash
         run: ./scripts/sanitize-evidence-tree.sh "$RUNNER_TEMP/evidence"
 
       - name: Upload sanitized rolling-update evidence
-        if: always()
+        if: ${{ always() && steps.sanitize_evidence.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: zerops-k8s-${{ env.K8S_PROFILE }}-rolling-update-evidence-${{ github.run_id }}

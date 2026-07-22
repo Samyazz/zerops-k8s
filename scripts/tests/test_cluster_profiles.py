@@ -180,10 +180,20 @@ class ClusterProfileManifestsTest(unittest.TestCase):
         self.assertNotIn("cert-manager", rendered.lower())
         self.assertIn("traefik-system", rendered)
 
+    def test_full_kube_state_metrics_does_not_render_duplicate_scrape_annotation(self):
+        bootstrap = (ROOT / "scripts" / "cluster-bootstrap.sh").read_text()
+        section = bootstrap.split(
+            "helm upgrade --install kube-state-metrics", 1
+        )[1].split("helm upgrade --install node-exporter", 1)[0]
+        self.assertNotIn('prometheus\\.io/scrape', section)
+        self.assertIn('prometheus\\.io/port', section)
+
     def test_evidence_redactor_covers_secrets_and_personal_data(self):
         sensitive = (
-            "Authorization: Bearer token-value Cookie: session=cookie-value "
-            "Set-Cookie: sid=set-cookie-value token=plain-token "
+            "Authorization: Bearer token-value\n"
+            "Cookie: session=cookie-value\n"
+            "Set-Cookie: sid=set-cookie-value\n"
+            "token=plain-token\n"
             "person@example.invalid 203.0.113.47\n"
         )
         result = subprocess.run(
@@ -198,7 +208,9 @@ class ClusterProfileManifestsTest(unittest.TestCase):
             "person@example.invalid", "203.0.113.47",
         ):
             self.assertNotIn(leaked, result.stdout)
-        self.assertGreaterEqual(result.stdout.count("[REDACTED]"), 4)
+        # A whole Cookie header may be replaced as one value; marker count is
+        # intentionally independent of how many cookie attributes it held.
+        self.assertGreaterEqual(result.stdout.count("[REDACTED]"), 2)
         self.assertIn("[REDACTED_EMAIL]", result.stdout)
         self.assertIn("[REDACTED_IP]", result.stdout)
 

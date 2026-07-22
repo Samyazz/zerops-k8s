@@ -40,7 +40,9 @@ plan=$work_dir/retention-plan.json
 evidence_dir=${RUNNER_TEMP:-$ROOT_DIR/artifacts}/evidence/backups
 mkdir -p "$evidence_dir"
 cleanup() { rm -rf "$work_dir"; }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 s3_base="${K8S_IMAGE_STORAGE_ENDPOINT%/}/${K8S_IMAGE_STORAGE_BUCKET}"
 s3_args=(--fail --silent --show-error --retry 3 --retry-all-errors \

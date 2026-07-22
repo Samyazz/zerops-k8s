@@ -22,7 +22,9 @@ esac
 
 inventory=$(mktemp)
 filtered_import=$(mktemp)
-trap 'rm -f "$inventory" "$filtered_import"' EXIT INT TERM
+trap 'rm -f "$inventory" "$filtered_import"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 refresh_inventory() {
   api_request_file GET "/project/${ZEROPS_PROJECT_ID}/service-stack?limit=100" '' "$inventory"

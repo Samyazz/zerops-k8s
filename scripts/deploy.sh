@@ -15,6 +15,7 @@ reconcile_created_services=none
 
 finish() {
   status=$?
+  trap - EXIT INT TERM
   if [[ "$success" != true && "$cluster_touched" == true && "${RECONCILE_EXISTING:-false}" != true ]]; then
     if [[ "$agents_deployed" == true ]]; then
       log 'deployment failed or was canceled after agent delivery; destroying partial nested infrastructure'
@@ -31,7 +32,9 @@ finish() {
   if [[ "$vpn_connected" == true ]]; then zcli vpn down >/dev/null 2>&1 || true; fi
   exit "$status"
 }
-trap finish EXIT INT TERM
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 shellcheck "$ROOT_DIR"/scripts/*.sh
 (cd "$ROOT_DIR" && go test ./... && go vet ./...)

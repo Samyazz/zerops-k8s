@@ -108,7 +108,9 @@ log "static profile/import validation passed for $K8S_PROFILE"
 require_env ZEROPS_TOKEN ZEROPS_PROJECT_ID
 
 response=$(mktemp)
-trap 'rm -f "$response"' EXIT INT TERM
+trap 'rm -f "$response"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 api_request_file GET "/project/${ZEROPS_PROJECT_ID}/service-stack?limit=100" '' "$response"
 
 # Limit the equality check to the repository-owned service universe. A zcp

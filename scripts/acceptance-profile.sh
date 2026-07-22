@@ -23,7 +23,9 @@ cleanup() {
     kubectl -n workloads delete "$object" --ignore-not-found --wait=false >/dev/null 2>&1 || true
   done
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 wait_node_unready() {
   local node=$1 deadline=$((SECONDS + 180)) ready

@@ -20,7 +20,9 @@ cleanup() {
   rm -f "$response" "$payload_file" "$api_response"
   [[ -z "${node_contract:-}" ]] || rm -f "$node_contract"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 api_request_file GET "/project/${ZEROPS_PROJECT_ID}/service-stack?limit=100" '' "$response"
 

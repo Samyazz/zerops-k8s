@@ -27,20 +27,20 @@ services:
     priority: 10
   - hostname: kibana
     type: ubuntu@24.04
-    buildFromGit: https://github.com/zeropsio/recipe-elk@main
+    buildFromGit: https://github.com/zeropsio/recipe-elk@2a64e642ae4c94ab976af0e270e407a95f80e575
     zeropsSetup: kibana
     enableSubdomainAccess: true
     maxContainers: 1
     verticalAutoscaling: {minRam: 1, maxRam: 4}
   - hostname: logstash
     type: ubuntu@24.04
-    buildFromGit: https://github.com/zeropsio/recipe-elk@main
+    buildFromGit: https://github.com/zeropsio/recipe-elk@2a64e642ae4c94ab976af0e270e407a95f80e575
     zeropsSetup: logstash
     maxContainers: 1
     verticalAutoscaling: {minRam: 1, maxRam: 4}
   - hostname: apmserver
     type: ubuntu@24.04
-    buildFromGit: https://github.com/zeropsio/recipe-elk@main
+    buildFromGit: https://github.com/zeropsio/recipe-elk@2a64e642ae4c94ab976af0e270e407a95f80e575
     zeropsSetup: apmserver
     maxContainers: 1
     envSecrets:

@@ -72,6 +72,22 @@ def blocks(text, key):
 
 
 class ProfileContractTests(unittest.TestCase):
+    def test_external_recipe_builds_are_commit_pinned(self):
+        references = []
+        for path in (
+            ROOT / "import.yaml",
+            ROOT / "infrastructure" / "observability.import.yaml",
+        ):
+            references.extend(
+                line.split("buildFromGit:", 1)[1].strip()
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if "buildFromGit:" in line
+            )
+        self.assertTrue(references)
+        for reference in references:
+            with self.subTest(reference=reference):
+                self.assertRegex(reference, r"^https://github\.com/[^@]+@[0-9a-f]{40}$")
+
     def test_descriptor_schema_and_enums(self):
         top_level = {
             "schemaVersion", "name", "default", "project", "topology",

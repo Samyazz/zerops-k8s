@@ -18,7 +18,9 @@ restore_stopped_nodes() {
   local node
   for node in "${restore_nodes[@]}"; do agent_request "$node" POST /v1/node/start >/dev/null || true; done
 }
-trap restore_stopped_nodes EXIT INT TERM
+trap restore_stopped_nodes EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 wait_node_unready() {
   local node=$1 deadline=$((SECONDS + 180)) ready

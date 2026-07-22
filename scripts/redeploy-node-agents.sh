@@ -87,7 +87,9 @@ restore_cordon() {
   fi
   set -e
 }
-trap restore_cordon EXIT INT TERM
+trap restore_cordon EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 preflight_agent_delivery() {
   local import_file worker_mode worker_cpu worker_ram worker_disk

@@ -56,6 +56,7 @@ current_cordoned=false
 upgrade_started=false
 finish() {
   status=$?
+  trap - EXIT INT TERM
   if [[ "$current_cordoned" == true && -n "$current_node" ]]; then
     kubectl uncordon "$current_node" >/dev/null 2>&1 || true
   fi
@@ -66,7 +67,9 @@ finish() {
   fi
   exit "$status"
 }
-trap finish EXIT INT TERM
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 expected_workers=$(cluster_tag_value workers)
 expected_workers=${expected_workers:-${#WORKERS[@]}}

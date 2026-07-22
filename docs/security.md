@@ -7,7 +7,7 @@
 - Kubernetes Secrets use API-server encryption at rest with a 32-byte key generated and stored through Zerops secrets.
 - The `workloads` namespace enforces the Restricted Pod Security Standard, least-privilege RBAC, default-deny NetworkPolicies, bounded resources, a `LimitRange`, and a `ResourceQuota`.
 - System components receive only documented PSA/privileged exceptions required by Calico, ingress, and profile-enabled storage/telemetry.
-- The API audit policy records mutations and metadata access. Logs and artifacts redact tokens, authorization headers, cookies, e-mail addresses, and IP addresses.
+- The API audit policy records mutations and metadata access. Live-operation stdout and stderr pass through the redactor before reaching GitHub Actions logs; evidence files are independently sanitized before upload. Both paths redact tokens, authorization headers, cookies, e-mail addresses, and IP addresses.
 - Kubescape/CIS findings are reports; they do not automatically block deployment. Functional and profile-appropriate conformance failures do.
 - Git stores no token, kubeconfig, password, private key, rendered Kubernetes Secret, or unredacted API response. GitHub secrets authenticate workflows; generated operator credentials stay in sensitive Zerops project variables.
 - GitHub deployment remains owner-triggered and manual. All changing workflows use repository-wide concurrency and the Zerops repository/profile lock. GitHub-owned Actions are pinned to full commit SHAs; third-party Actions are prohibited.
@@ -26,7 +26,16 @@ The production and staging names do not alter their availability facts: both hav
 
 ## Secret and evidence handling
 
-The full and production recovery workflows create object-storage credentials only at runtime from Zerops environment references. Decrypted recovery bundles, private age identities, S3 credentials, API tokens, Headlamp tokens, and kubeconfigs never enter artifacts. One-day artifacts contain only the selected profile, its public descriptor, exact service/Kubernetes inventories, statuses, checksums, non-sensitive object keys, redacted functional output, and forbidden-component assertions.
+The full and production recovery workflows create object-storage credentials only at runtime from Zerops environment references. Decrypted recovery bundles, encrypted recovery archives, private age identities, S3 credentials, API tokens, Headlamp tokens, and kubeconfigs never enter artifacts. One-day artifacts contain only the selected profile, its public descriptor, exact service/Kubernetes inventories, statuses, checksums, non-sensitive object keys, redacted functional output, and forbidden-component assertions.
+
+The workflow redaction pipeline runs with Bash `pipefail`, so filtering output
+cannot turn a failed operation into a successful job. JSON and YAML evidence is
+redacted structurally, including nested and array values. Binary files and
+Kubernetes `Secret`/`SecretList` objects are rejected, and artifact upload is
+gated on successful sanitization, so a rejected tree cannot be published.
+Historical workflow-log payloads and superseded artifacts are removed before
+publication; run conclusions and the final sanitized evidence records remain
+available.
 
 Staging must start without `k8sbackups_*` variables. Its node image is built locally so adding a backup credential solely for image distribution cannot accidentally create an undeclared durable dependency.
 

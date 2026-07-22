@@ -136,7 +136,6 @@ install_advanced_observability() {
   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update >/dev/null
   helm upgrade --install kube-state-metrics prometheus-community/kube-state-metrics \
     --version "$KUBE_STATE_METRICS_CHART_VERSION" --namespace observability \
-    --set-string service.annotations."prometheus\.io/scrape"='true' \
     --set-string service.annotations."prometheus\.io/port"='8080' --wait --timeout 10m
   helm upgrade --install node-exporter prometheus-community/prometheus-node-exporter \
     --version "$NODE_EXPORTER_CHART_VERSION" --namespace observability \
