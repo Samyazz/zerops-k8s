@@ -152,70 +152,76 @@ func TestEnsureHostMountPropagationStopsOnFailure(t *testing.T) {
 	}
 }
 
-func TestStopNodeAcceptsStoppedStateAfterDockerStopError(t *testing.T) {
+func TestStopNodeQuiescesNestedServicesWithoutStoppingWrapper(t *testing.T) {
+	stateDir := t.TempDir()
 	runner := &scriptedRunner{results: []scriptedResult{
 		{out: "running\n"},
 		{},
-		{err: errors.New("daemon reported mount cleanup failure")},
-		{out: "exited\n"},
 	}}
-	a := agent{cfg: config{ContainerName: "nested-node"}, runner: runner}
+	a := agent{cfg: config{ContainerName: "nested-node", StateDir: stateDir}, runner: runner}
 	recorder := httptest.NewRecorder()
 	a.stopNode(recorder, httptest.NewRequest(http.MethodPost, "/v1/node/stop", nil))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), `"status":"stopped"`) {
+	if !strings.Contains(recorder.Body.String(), `"status":"quiesced"`) {
 		t.Fatalf("body = %s", recorder.Body.String())
 	}
+	if !a.nodeIsQuiesced() {
+		t.Fatal("quiesced marker was not persisted")
+	}
 	for _, command := range runner.commands {
-		if command.name == "docker" && len(command.args) > 0 && command.args[0] == "kill" {
-			t.Fatal("force stop was used after the container was already stopped")
+		if command.name == "docker" && len(command.args) > 0 && (command.args[0] == "stop" || command.args[0] == "kill") {
+			t.Fatalf("wrapper lifecycle command was used: %#v", command)
 		}
 	}
 }
 
-func TestStopNodeForceStopsRunningContainerAfterDockerStopError(t *testing.T) {
-	runner := &scriptedRunner{results: []scriptedResult{
-		{out: "running\n"},
-		{},
-		{err: errors.New("daemon stop timeout")},
-		{out: "running\n"},
-		{},
-		{out: "exited\n"},
-	}}
-	a := agent{cfg: config{ContainerName: "nested-node"}, runner: runner}
+func TestStopNodeIsIdempotentWhileQuiesced(t *testing.T) {
+	stateDir := t.TempDir()
+	a := agent{cfg: config{ContainerName: "nested-node", StateDir: stateDir}, runner: &scriptedRunner{}}
+	if err := a.setNodeQuiesced(true); err != nil {
+		t.Fatal(err)
+	}
 	recorder := httptest.NewRecorder()
 	a.stopNode(recorder, httptest.NewRequest(http.MethodPost, "/v1/node/stop", nil))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
-	wantKill := recordedCommand{name: "docker", args: []string{"kill", "nested-node"}}
-	if !containsRecordedCommand(runner.commands, wantKill) {
-		t.Fatalf("commands = %#v, want %#v", runner.commands, wantKill)
+	if !strings.Contains(recorder.Body.String(), `"status":"quiesced"`) {
+		t.Fatalf("body = %s", recorder.Body.String())
 	}
 }
 
-func TestStopNodeWaitsForDelayedStoppedStateAfterSuccessfulDockerStop(t *testing.T) {
+func TestStartNodeRevivesPersistedQuiescedWrapper(t *testing.T) {
+	stateDir := t.TempDir()
 	runner := &scriptedRunner{results: []scriptedResult{
-		{out: "running\n"},
 		{},
 		{},
 		{out: "running\n"},
-		{out: "exited\n"},
+		{},
+		{},
+		{},
+		{},
 	}}
-	a := agent{cfg: config{ContainerName: "nested-node"}, runner: runner}
-	recorder := httptest.NewRecorder()
-	a.stopNode(recorder, httptest.NewRequest(http.MethodPost, "/v1/node/stop", nil))
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	a := agent{cfg: config{ContainerName: "nested-node", StateDir: stateDir}, runner: runner}
+	if err := a.setNodeQuiesced(true); err != nil {
+		t.Fatal(err)
 	}
-	for _, command := range runner.commands {
-		if command.name == "docker" && len(command.args) > 0 && command.args[0] == "kill" {
-			t.Fatal("force stop was used while a successful stop was still settling")
+	if err := a.startNodeLocked(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if a.nodeIsQuiesced() {
+		t.Fatal("quiesced marker remained after successful node revival")
+	}
+	for _, want := range []recordedCommand{
+		{name: "docker", args: []string{"exec", "nested-node", "systemctl", "start", "containerd"}},
+		{name: "docker", args: []string{"exec", "nested-node", "systemctl", "restart", "kubelet"}},
+	} {
+		if !containsRecordedCommand(runner.commands, want) {
+			t.Fatalf("commands = %#v, missing %#v", runner.commands, want)
 		}
 	}
 }

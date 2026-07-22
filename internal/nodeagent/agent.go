@@ -105,6 +105,10 @@ func (a *agent) health(w http.ResponseWriter, _ *http.Request) {
 
 func (a *agent) state(w http.ResponseWriter, r *http.Request) {
 	state, detail := a.containerState(r.Context())
+	if a.nodeIsQuiesced() {
+		state = "quiesced"
+		detail = "nested kubelet and containerd are stopped; wrapper remains recoverable"
+	}
 	writeJSON(w, http.StatusOK, response{Status: state, Detail: detail})
 }
 
@@ -125,13 +129,27 @@ func (a *agent) startNodeLocked(ctx context.Context) error {
 	state, _ := a.containerState(ctx)
 	switch state {
 	case "running":
+		if a.nodeIsQuiesced() {
+			if _, err := a.runner.run(ctx, "docker", []string{
+				"exec", a.cfg.ContainerName, "systemctl", "start", "containerd",
+			}, ""); err != nil {
+				return fmt.Errorf("start containerd after nested node quiesce: %w", err)
+			}
+			if err := a.ensureNestedNodeReady(ctx, true); err != nil {
+				return err
+			}
+			return a.setNodeQuiesced(false)
+		}
 		return a.ensureNestedNodeReady(ctx, false)
 	case "stopped":
 		a.terminateOrphanedPodProcesses(ctx)
 		if _, err := a.runner.run(ctx, "docker", []string{"start", a.cfg.ContainerName}, ""); err != nil {
 			return err
 		}
-		return a.ensureNestedNodeReady(ctx, true)
+		if err := a.ensureNestedNodeReady(ctx, true); err != nil {
+			return err
+		}
+		return a.setNodeQuiesced(false)
 	}
 	if err := a.ensureNodeImage(ctx); err != nil {
 		return err
@@ -162,7 +180,10 @@ func (a *agent) startNodeLocked(ctx context.Context) error {
 	if _, err := a.runner.run(ctx, "docker", args, ""); err != nil {
 		return err
 	}
-	return a.ensureNestedNodeReady(ctx, true)
+	if err := a.ensureNestedNodeReady(ctx, true); err != nil {
+		return err
+	}
+	return a.setNodeQuiesced(false)
 }
 
 // Zerops Docker services run inside an outer VM. A VM resource change can
@@ -299,6 +320,10 @@ func (a *agent) loadNodeImage(w http.ResponseWriter, r *http.Request) {
 func (a *agent) stopNode(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.nodeIsQuiesced() {
+		writeJSON(w, http.StatusOK, response{Status: "quiesced"})
+		return
+	}
 	state, _ := a.containerState(r.Context())
 	if state == "missing" || state == "stopped" {
 		writeJSON(w, http.StatusOK, response{Status: state})
@@ -313,10 +338,11 @@ func (a *agent) stopNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("nested node did not settle from transient state %q (now %q): %s", state, settledState, detail))
 		return
 	}
-	// Pods run in the host cgroup namespace. If Docker stops the systemd
-	// container first, containerd shims can survive outside its cgroup and
-	// retain host ports. Stop kubelet and its tasks while containerd can still
-	// account for them, then shut containerd down before stopping the wrapper.
+	// Pods run in the host cgroup namespace and Longhorn uses recursively
+	// propagated mounts. Stopping the systemd wrapper can therefore leave the
+	// outer Docker daemon waiting forever for an exit event. Quiesce the actual
+	// Kubernetes node services instead: the node becomes unavailable to the
+	// control plane, while POST /v1/node/start can deterministically revive it.
 	gracefulStop := `
 systemctl stop kubelet || true
 if systemctl is-active --quiet containerd; then
@@ -330,54 +356,34 @@ if systemctl is-active --quiet containerd; then
   systemctl stop containerd || true
 fi
 `
+	if err := a.setNodeQuiesced(true); err != nil {
+		writeError(w, fmt.Errorf("persist nested node quiesce state: %w", err))
+		return
+	}
 	if _, err := a.runner.run(r.Context(), "docker", []string{
 		"exec", a.cfg.ContainerName, "sh", "-lc", gracefulStop,
 	}, ""); err != nil {
 		writeError(w, fmt.Errorf("quiesce nested Kubernetes node: %w", err))
 		return
 	}
-	_, stopErr := a.runner.run(r.Context(), "docker", []string{"stop", "--time", "60", a.cfg.ContainerName}, "")
-	if err := a.ensureContainerStopped(r.Context(), stopErr); err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, response{Status: "stopped"})
+	writeJSON(w, http.StatusOK, response{Status: "quiesced"})
 }
 
-// Docker can return an error after the nested systemd container has already
-// stopped (for example while tearing down propagated kubelet/Longhorn mounts).
-// Treat the observed state as authoritative and use a force-stop fallback only
-// after kubelet and containerd have already been quiesced above.
-func (a *agent) ensureContainerStopped(ctx context.Context, gracefulErr error) error {
-	state, detail, stopped := a.waitForContainerStopped(ctx, 0)
-	if stopped {
-		if gracefulErr != nil {
-			log.Printf("docker stop returned an error after the node stopped; accepting the idempotent stopped state: %v", gracefulErr)
-		}
+func (a *agent) nodeIsQuiesced() bool {
+	_, err := os.Stat(a.path("node-quiesced"))
+	return err == nil
+}
+
+func (a *agent) setNodeQuiesced(quiesced bool) error {
+	path := a.path("node-quiesced")
+	if quiesced {
+		return os.WriteFile(path, []byte("quiesced\n"), 0600)
+	}
+	err := os.Remove(path)
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	if gracefulErr == nil {
-		state, detail, stopped = a.waitForContainerStopped(ctx, 2*time.Minute)
-		if stopped {
-			return nil
-		}
-		return fmt.Errorf("nested node remained in state %q after docker stop reported success: %s", state, detail)
-	}
-
-	log.Printf("docker stop failed while the nested node was %q; forcing the already-quiesced container down", state)
-	if _, err := a.runner.run(ctx, "docker", []string{"kill", a.cfg.ContainerName}, ""); err != nil {
-		state, detail, stopped = a.waitForContainerStopped(ctx, 0)
-		if stopped {
-			return nil
-		}
-		return fmt.Errorf("graceful stop failed (%v), force stop failed (%v), current state %q: %s", gracefulErr, err, state, detail)
-	}
-
-	state, detail, stopped = a.waitForContainerStopped(ctx, 30*time.Second)
-	if stopped {
-		return nil
-	}
-	return fmt.Errorf("graceful stop failed (%v) and the force-stopped node remained in state %q: %s", gracefulErr, state, detail)
+	return err
 }
 
 func (a *agent) waitForContainerStopped(ctx context.Context, timeout time.Duration) (string, string, bool) {
