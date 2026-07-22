@@ -304,6 +304,15 @@ func (a *agent) stopNode(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, response{Status: state})
 		return
 	}
+	if state != "running" {
+		settledState, detail, stopped := a.waitForContainerStopped(r.Context(), 30*time.Second)
+		if stopped {
+			writeJSON(w, http.StatusOK, response{Status: "stopped"})
+			return
+		}
+		writeError(w, fmt.Errorf("nested node did not settle from transient state %q (now %q): %s", state, settledState, detail))
+		return
+	}
 	// Pods run in the host cgroup namespace. If Docker stops the systemd
 	// container first, containerd shims can survive outside its cgroup and
 	// retain host ports. Stop kubelet and its tasks while containerd can still
@@ -340,38 +349,50 @@ fi
 // Treat the observed state as authoritative and use a force-stop fallback only
 // after kubelet and containerd have already been quiesced above.
 func (a *agent) ensureContainerStopped(ctx context.Context, gracefulErr error) error {
-	state, detail := a.containerState(ctx)
-	if state == "stopped" || state == "missing" {
+	state, detail, stopped := a.waitForContainerStopped(ctx, 0)
+	if stopped {
 		if gracefulErr != nil {
 			log.Printf("docker stop returned an error after the node stopped; accepting the idempotent stopped state: %v", gracefulErr)
 		}
 		return nil
 	}
 	if gracefulErr == nil {
-		return fmt.Errorf("nested node remained in state %q after docker stop: %s", state, detail)
+		state, detail, stopped = a.waitForContainerStopped(ctx, 2*time.Minute)
+		if stopped {
+			return nil
+		}
+		return fmt.Errorf("nested node remained in state %q after docker stop reported success: %s", state, detail)
 	}
 
 	log.Printf("docker stop failed while the nested node was %q; forcing the already-quiesced container down", state)
 	if _, err := a.runner.run(ctx, "docker", []string{"kill", a.cfg.ContainerName}, ""); err != nil {
-		state, detail = a.containerState(ctx)
-		if state == "stopped" || state == "missing" {
+		state, detail, stopped = a.waitForContainerStopped(ctx, 0)
+		if stopped {
 			return nil
 		}
 		return fmt.Errorf("graceful stop failed (%v), force stop failed (%v), current state %q: %s", gracefulErr, err, state, detail)
 	}
 
-	deadline := time.Now().Add(30 * time.Second)
+	state, detail, stopped = a.waitForContainerStopped(ctx, 30*time.Second)
+	if stopped {
+		return nil
+	}
+	return fmt.Errorf("graceful stop failed (%v) and the force-stopped node remained in state %q: %s", gracefulErr, state, detail)
+}
+
+func (a *agent) waitForContainerStopped(ctx context.Context, timeout time.Duration) (string, string, bool) {
+	deadline := time.Now().Add(timeout)
 	for {
-		state, detail = a.containerState(ctx)
+		state, detail := a.containerState(ctx)
 		if state == "stopped" || state == "missing" {
-			return nil
+			return state, detail, true
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("graceful stop failed (%v) and the force-stopped node remained in state %q: %s", gracefulErr, state, detail)
+			return state, detail, false
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return state, ctx.Err().Error(), false
 		case <-time.After(time.Second):
 		}
 	}

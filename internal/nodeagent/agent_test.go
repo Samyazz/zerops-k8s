@@ -198,6 +198,28 @@ func TestStopNodeForceStopsRunningContainerAfterDockerStopError(t *testing.T) {
 	}
 }
 
+func TestStopNodeWaitsForDelayedStoppedStateAfterSuccessfulDockerStop(t *testing.T) {
+	runner := &scriptedRunner{results: []scriptedResult{
+		{out: "running\n"},
+		{},
+		{},
+		{out: "running\n"},
+		{out: "exited\n"},
+	}}
+	a := agent{cfg: config{ContainerName: "nested-node"}, runner: runner}
+	recorder := httptest.NewRecorder()
+	a.stopNode(recorder, httptest.NewRequest(http.MethodPost, "/v1/node/stop", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	for _, command := range runner.commands {
+		if command.name == "docker" && len(command.args) > 0 && command.args[0] == "kill" {
+			t.Fatal("force stop was used while a successful stop was still settling")
+		}
+	}
+}
+
 func containsRecordedCommand(commands []recordedCommand, want recordedCommand) bool {
 	for _, command := range commands {
 		if reflect.DeepEqual(command, want) {
