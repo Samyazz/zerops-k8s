@@ -530,7 +530,9 @@ class WorkflowProfileContractTests(unittest.TestCase):
             "Set-Cookie: auth=another-secret\n"
             'headers={"Cookie":"signed=quoted-cookie-secret; theme=dark"}\n'
             "token=token-value password: pass-value secret='secret-value'\n"
-            "owner@example.invalid connected from 203.0.113.42 and 2001:db8::42\n"
+            "owner@example.invalid connected from 203.0.113.42, 2001:db8::42, "
+            "::1, and 2001:0db8:85a3:0000:0000:8a2e:0370:7334\n"
+            'timestamp="2026-07-22T07:58:28.607822Z"\n'
         )
         result = subprocess.run(
             [str(ROOT / "scripts" / "redact-evidence.sh")],
@@ -553,11 +555,14 @@ class WorkflowProfileContractTests(unittest.TestCase):
             "owner@example.invalid",
             "203.0.113.42",
             "2001:db8::42",
+            "::1",
+            "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
         ):
             self.assertNotIn(sensitive, result.stdout)
         self.assertIn("[REDACTED]", result.stdout)
         self.assertIn("[REDACTED_EMAIL]", result.stdout)
         self.assertIn("[REDACTED_IP]", result.stdout)
+        self.assertIn('timestamp="2026-07-22T07:58:28.607822Z"', result.stdout)
 
     def test_profile_documentation_covers_workflows_endpoints_and_imports(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

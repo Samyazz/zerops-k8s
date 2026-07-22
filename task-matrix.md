@@ -193,6 +193,12 @@ All links below are owner-triggered GitHub Actions runs against the current
 downloaded copies were scanned locally with zero matches for the repository PAT,
 authorization values, private keys, cookies, email addresses, or IP addresses.
 
+Audit retry [29900531097](https://github.com/Samyazz/zerops-k8s/actions/runs/29900531097)
+correctly failed when the IPv6 evidence redactor corrupted an RFC3339 timestamp
+used by the new log-freshness gate. Automated failure cleanup removed every
+recipe-owned staging service and preserved `zcp`; the redactor now has an exact
+timestamp-preservation regression test before live acceptance is retried.
+
 | Profile / operation | Successful run | Result |
 |---|---|---|
 | Staging clean deployment and acceptance | [29877154025](https://github.com/Samyazz/zerops-k8s/actions/runs/29877154025) | Exact two-service inventory, two Ready nodes, networking, Gateway ingress, metrics, security, platform logs/statistics, and node recovery passed. |
