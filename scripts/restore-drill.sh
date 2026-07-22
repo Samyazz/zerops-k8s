@@ -20,6 +20,9 @@ require tar
 if [[ -z "${K8S_IMAGE_STORAGE_ENDPOINT:-}" ]]; then
   load_zerops_env
 fi
+if [[ -z "${K8S_IMAGE_STORAGE_ENDPOINT:-}" ]]; then
+  load_backup_env
+fi
 require_env K8S_IMAGE_STORAGE_ENDPOINT K8S_IMAGE_STORAGE_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 grep -q '^AGE-SECRET-KEY-' <<<"$K8S_RECOVERY_AGE_IDENTITY" \
   || die 'K8S_RECOVERY_AGE_IDENTITY does not contain a native age identity'

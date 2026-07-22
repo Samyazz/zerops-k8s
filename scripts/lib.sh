@@ -86,6 +86,43 @@ load_zerops_env() {
   die 'failed to load Zerops environment after five attempts'
 }
 
+load_backup_env() {
+  [[ "$BACKUP_ENABLED" == true && -n "$BACKUP_HOSTNAME" ]] \
+    || die "profile $K8S_PROFILE has no managed backup environment"
+  require_env ZEROPS_PROJECT_ID
+  local env_file attempt apiUrl bucketName accessKeyId secretAccessKey
+  env_file=$(mktemp)
+  # A fresh startWithoutCode node has no yaml-baked sibling aliases yet. Read
+  # the managed object-storage service in its own context and immediately map
+  # only its four connection fields to the names shared by the workflows.
+  for attempt in 1 2 3 4 5; do
+    if timeout 60 zcli project env -P "$ZEROPS_PROJECT_ID" --service "$BACKUP_HOSTNAME" >"$env_file"; then
+      sed -i '/^K8S_PROFILE=/d' "$env_file"
+      set -a
+      # shellcheck disable=SC1090
+      if ! source "$env_file"; then
+        set +a
+        rm -f "$env_file"
+        die 'Zerops returned a backup-service environment that could not be loaded safely'
+      fi
+      set +a
+      rm -f "$env_file"
+      require_env apiUrl bucketName accessKeyId secretAccessKey
+      export K8S_IMAGE_STORAGE_ENDPOINT=$apiUrl
+      export K8S_IMAGE_STORAGE_BUCKET=$bucketName
+      export AWS_ACCESS_KEY_ID=$accessKeyId
+      export AWS_SECRET_ACCESS_KEY=$secretAccessKey
+      unset apiUrl bucketName accessKeyId secretAccessKey
+      return 0
+    fi
+    : >"$env_file"
+    log "Zerops backup environment fetch failed on attempt $attempt; retrying"
+    sleep 3
+  done
+  rm -f "$env_file"
+  die 'failed to load the managed backup environment after five attempts'
+}
+
 agent_request() {
   local node=$1 method=$2 path=$3 data=${4:-}
   local args=(--fail --silent --show-error --connect-timeout 10 --max-time 1200

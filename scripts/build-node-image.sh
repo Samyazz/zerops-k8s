@@ -15,6 +15,9 @@ require zcli
 if [[ -z "${K8S_IMAGE_STORAGE_ENDPOINT:-}" ]]; then
   load_zerops_env
 fi
+if [[ -z "${K8S_IMAGE_STORAGE_ENDPOINT:-}" ]]; then
+  load_backup_env
+fi
 require_env K8S_IMAGE_STORAGE_ENDPOINT K8S_IMAGE_STORAGE_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 
 artifact_dir=${RUNNER_TEMP:-$ROOT_DIR/artifacts}/node-image

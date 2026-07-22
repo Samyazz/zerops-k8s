@@ -12,7 +12,7 @@ owner_run=$(cluster_tag_value run)
 operation=$(cluster_tag_value operation)
 attempt=$(cluster_tag_value attempt)
 
-if [[ ( "$state" == destroyed || "$state" == deploying ) \
+if [[ ( "$state" == destroyed || "$state" == deploying || "$state" == cleanup-failed ) \
       && "${repository,,}" == "${GITHUB_REPOSITORY,,}" \
       && "$attempt" == "$GITHUB_RUN_ID" \
       && ( "$operation" == create || "$operation" == switch ) ]]; then

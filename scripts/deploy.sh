@@ -9,13 +9,23 @@ source "$ROOT_DIR/versions.env"
 require_env ZEROPS_TOKEN ZEROPS_PROJECT_ID ZEROPS_CLIENT_ID
 success=false
 cluster_touched=false
+agents_deployed=false
 vpn_connected=false
 
 finish() {
   status=$?
   if [[ "$success" != true && "$cluster_touched" == true && "${RECONCILE_EXISTING:-false}" != true ]]; then
-    log 'deployment failed or was canceled; destroying partial nested infrastructure'
-    "$ROOT_DIR/scripts/destroy-cluster.sh" || true
+    if [[ "$agents_deployed" == true ]]; then
+      log 'deployment failed or was canceled after agent delivery; destroying partial nested infrastructure'
+      "$ROOT_DIR/scripts/destroy-cluster.sh" || true
+    else
+      log 'deployment failed before agent delivery; purging disposable outer services directly'
+      if "$ROOT_DIR/scripts/reconcile-profile-services.sh" purge; then
+        set_cluster_state destroyed "${GITHUB_REPOSITORY:-Samyazz/zerops-k8s}" "${GITHUB_RUN_ID:-local}" || true
+      else
+        set_cluster_state cleanup-failed "${GITHUB_REPOSITORY:-Samyazz/zerops-k8s}" "${GITHUB_RUN_ID:-local}" || true
+      fi
+    fi
   fi
   if [[ "$vpn_connected" == true ]]; then zcli vpn down >/dev/null 2>&1 || true; fi
   exit "$status"
@@ -129,6 +139,7 @@ if [[ "$RECONCILE_EXISTING" == true ]]; then
   log 'preserving existing outer node runtimes and their nested Kubernetes state during reconciliation'
 else
   "$ROOT_DIR/scripts/build-and-deploy.sh"
+  agents_deployed=true
 fi
 
 export KUBECONFIG="${RUNNER_TEMP:-$ROOT_DIR/artifacts}/kubeconfig"

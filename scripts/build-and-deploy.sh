@@ -22,6 +22,9 @@ object="node-images/zerops-k8s-node-v${KUBERNETES_VERSION}.tar.gz"
 
 load_zerops_env
 if [[ "${RECONCILE_EXISTING:-false}" != true && "$NODE_IMAGE_MODE" == object-storage ]]; then
+  if [[ -z "${K8S_IMAGE_STORAGE_ENDPOINT:-}" ]]; then
+    load_backup_env
+  fi
   require docker
   log "building nested node image $image"
   docker build --pull \

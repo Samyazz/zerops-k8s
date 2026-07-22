@@ -54,9 +54,16 @@ jobs:
           zcli vpn up -P "$ZEROPS_PROJECT_ID" --auto-disconnect --mtu "${ZEROPS_VPN_MTU:-1280}"
           trap 'zcli vpn down >/dev/null 2>&1 || true' EXIT
           [[ -z "$STUCK_PROCESS_ID" ]] || ./scripts/cancel-process.sh "$STUCK_PROCESS_ID"
-          ./scripts/recover-node-agents.sh
-          ./scripts/destroy-cluster.sh
-          ./scripts/reconcile-profile-services.sh purge
+          source ./scripts/lib.sh
+          if [[ $(cluster_tag_value state) == cleanup-failed ]]; then
+            log 'cleanup-failed state has no trustworthy nested agents; purging recipe-owned outer services directly'
+            ./scripts/reconcile-profile-services.sh purge
+            set_cluster_state destroyed "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+          else
+            ./scripts/recover-node-agents.sh
+            ./scripts/destroy-cluster.sh
+            ./scripts/reconcile-profile-services.sh purge
+          fi
 
       - name: Record sanitized destroy evidence
         if: always()

@@ -146,7 +146,7 @@ class WorkflowProfileContractTests(unittest.TestCase):
     def test_next_deploy_purges_an_abandoned_clean_creation_before_retry(self):
         deploy = (ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
         stale = deploy.index('"$project_state" == deploying')
-        purge = deploy.index('"$ROOT_DIR/scripts/reconcile-profile-services.sh" purge')
+        purge = deploy.index('"$ROOT_DIR/scripts/reconcile-profile-services.sh" purge', stale)
         attempt = deploy.index('set_cluster_tag attempt "$GITHUB_RUN_ID"')
         self.assertLess(stale, purge)
         self.assertLess(purge, attempt)
@@ -176,7 +176,7 @@ class WorkflowProfileContractTests(unittest.TestCase):
     def test_explicit_destroy_removes_all_recipe_owned_outer_services(self):
         workflow = (ROOT / ".github" / "workflows" / "destroy.yml").read_text(encoding="utf-8")
         destroy = workflow.index("./scripts/destroy-cluster.sh")
-        purge = workflow.index("./scripts/reconcile-profile-services.sh purge")
+        purge = workflow.index("./scripts/reconcile-profile-services.sh purge", destroy)
         self.assertLess(destroy, purge)
 
     def test_restore_drill_uses_the_selected_profile_contract(self):
@@ -233,6 +233,22 @@ class WorkflowProfileContractTests(unittest.TestCase):
         upgrade = (ROOT / "scripts" / "upgrade-cluster.sh").read_text(encoding="utf-8")
         self.assertNotIn('PUSH_AGENT_CODE=true "$ROOT_DIR/scripts/redeploy-node-agents.sh"', upgrade)
         self.assertIn("installed node agent predates the state-preserving upgrade endpoint", upgrade)
+
+    def test_fresh_object_storage_environment_is_loaded_before_agent_delivery(self):
+        library = (ROOT / "scripts" / "lib.sh").read_text(encoding="utf-8")
+        delivery = (ROOT / "scripts" / "build-and-deploy.sh").read_text(encoding="utf-8")
+        self.assertIn("load_backup_env()", library)
+        self.assertIn('--service "$BACKUP_HOSTNAME"', library)
+        self.assertIn("export K8S_IMAGE_STORAGE_ENDPOINT=$apiUrl", library)
+        self.assertIn("load_backup_env", delivery)
+
+    def test_failed_fresh_creation_purges_even_from_cleanup_failed(self):
+        cleanup = (ROOT / "scripts" / "cleanup-failed-run.sh").read_text(encoding="utf-8")
+        deploy = (ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
+        destroy = workflow_text("destroy.yml")
+        self.assertIn('"$state" == cleanup-failed', cleanup)
+        self.assertIn("deployment failed before agent delivery", deploy)
+        self.assertIn("purging recipe-owned outer services directly", destroy)
 
     def test_compact_profiles_collect_platform_logs_and_resource_statistics(self):
         acceptance = (ROOT / "scripts" / "acceptance-profile.sh").read_text(encoding="utf-8")
