@@ -29,6 +29,26 @@ func (r *recordingRunner) run(_ context.Context, name string, args []string, _ s
 	return "", nil
 }
 
+type scriptedResult struct {
+	out string
+	err error
+}
+
+type scriptedRunner struct {
+	commands []recordedCommand
+	results  []scriptedResult
+}
+
+func (r *scriptedRunner) run(_ context.Context, name string, args []string, _ string) (string, error) {
+	r.commands = append(r.commands, recordedCommand{name: name, args: append([]string(nil), args...)})
+	if len(r.results) == 0 {
+		return "", errors.New("unexpected command")
+	}
+	result := r.results[0]
+	r.results = r.results[1:]
+	return result.out, result.err
+}
+
 func TestWriteJSONSetsExplicitContentLength(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	writeJSON(recorder, http.StatusCreated, response{Status: "ok"})
@@ -130,4 +150,59 @@ func TestEnsureHostMountPropagationStopsOnFailure(t *testing.T) {
 	if len(runner.commands) != 1 {
 		t.Fatalf("commands after failure = %d, want 1", len(runner.commands))
 	}
+}
+
+func TestStopNodeAcceptsStoppedStateAfterDockerStopError(t *testing.T) {
+	runner := &scriptedRunner{results: []scriptedResult{
+		{out: "running\n"},
+		{},
+		{err: errors.New("daemon reported mount cleanup failure")},
+		{out: "exited\n"},
+	}}
+	a := agent{cfg: config{ContainerName: "nested-node"}, runner: runner}
+	recorder := httptest.NewRecorder()
+	a.stopNode(recorder, httptest.NewRequest(http.MethodPost, "/v1/node/stop", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"status":"stopped"`) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+	for _, command := range runner.commands {
+		if command.name == "docker" && len(command.args) > 0 && command.args[0] == "kill" {
+			t.Fatal("force stop was used after the container was already stopped")
+		}
+	}
+}
+
+func TestStopNodeForceStopsRunningContainerAfterDockerStopError(t *testing.T) {
+	runner := &scriptedRunner{results: []scriptedResult{
+		{out: "running\n"},
+		{},
+		{err: errors.New("daemon stop timeout")},
+		{out: "running\n"},
+		{},
+		{out: "exited\n"},
+	}}
+	a := agent{cfg: config{ContainerName: "nested-node"}, runner: runner}
+	recorder := httptest.NewRecorder()
+	a.stopNode(recorder, httptest.NewRequest(http.MethodPost, "/v1/node/stop", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	wantKill := recordedCommand{name: "docker", args: []string{"kill", "nested-node"}}
+	if !containsRecordedCommand(runner.commands, wantKill) {
+		t.Fatalf("commands = %#v, want %#v", runner.commands, wantKill)
+	}
+}
+
+func containsRecordedCommand(commands []recordedCommand, want recordedCommand) bool {
+	for _, command := range commands {
+		if reflect.DeepEqual(command, want) {
+			return true
+		}
+	}
+	return false
 }

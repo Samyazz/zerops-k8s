@@ -327,11 +327,54 @@ fi
 		writeError(w, fmt.Errorf("quiesce nested Kubernetes node: %w", err))
 		return
 	}
-	if _, err := a.runner.run(r.Context(), "docker", []string{"stop", "--time", "60", a.cfg.ContainerName}, ""); err != nil {
+	_, stopErr := a.runner.run(r.Context(), "docker", []string{"stop", "--time", "60", a.cfg.ContainerName}, "")
+	if err := a.ensureContainerStopped(r.Context(), stopErr); err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response{Status: "stopped"})
+}
+
+// Docker can return an error after the nested systemd container has already
+// stopped (for example while tearing down propagated kubelet/Longhorn mounts).
+// Treat the observed state as authoritative and use a force-stop fallback only
+// after kubelet and containerd have already been quiesced above.
+func (a *agent) ensureContainerStopped(ctx context.Context, gracefulErr error) error {
+	state, detail := a.containerState(ctx)
+	if state == "stopped" || state == "missing" {
+		if gracefulErr != nil {
+			log.Printf("docker stop returned an error after the node stopped; accepting the idempotent stopped state: %v", gracefulErr)
+		}
+		return nil
+	}
+	if gracefulErr == nil {
+		return fmt.Errorf("nested node remained in state %q after docker stop: %s", state, detail)
+	}
+
+	log.Printf("docker stop failed while the nested node was %q; forcing the already-quiesced container down", state)
+	if _, err := a.runner.run(ctx, "docker", []string{"kill", a.cfg.ContainerName}, ""); err != nil {
+		state, detail = a.containerState(ctx)
+		if state == "stopped" || state == "missing" {
+			return nil
+		}
+		return fmt.Errorf("graceful stop failed (%v), force stop failed (%v), current state %q: %s", gracefulErr, err, state, detail)
+	}
+
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		state, detail = a.containerState(ctx)
+		if state == "stopped" || state == "missing" {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("graceful stop failed (%v) and the force-stopped node remained in state %q: %s", gracefulErr, state, detail)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 func (a *agent) initCluster(w http.ResponseWriter, r *http.Request) {
