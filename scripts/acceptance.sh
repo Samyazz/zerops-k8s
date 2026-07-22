@@ -107,6 +107,7 @@ kubectl wait --for=condition=Ready nodes --all --timeout=5m
 wait_all_workload_pods_ready
 kubectl get pods -A -o wide | tee "$artifact_dir/pods.txt"
 "$ROOT_DIR/scripts/verify-dsr-api.sh" "$artifact_dir/dsr-api-certificate.txt"
+"$ROOT_DIR/scripts/verify-in-project-dsr.sh" "$artifact_dir/dsr-in-project-readyz.txt"
 kubectl get --raw=/readyz?verbose | tee "$artifact_dir/apiserver-readyz.txt"
 
 cat <<'YAML' | kubectl apply -f -

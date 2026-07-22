@@ -130,7 +130,7 @@ func TestLoadConfigMigratesLegacyControlPlaneEndpoint(t *testing.T) {
 	}
 }
 
-func TestLoadConfigUsesRFC1123KubeadmEndpointForDSRClients(t *testing.T) {
+func TestLoadConfigMigratesLegacyDSREndpointForKubeadm(t *testing.T) {
 	t.Setenv("K8S_AGENT_TOKEN", "test-token")
 	t.Setenv("K8S_NODE_NAME", "k8scp1")
 	t.Setenv("K8S_CONTROL_PLANE_ENDPOINT", "_dsr.k8sedge.zerops:6443")

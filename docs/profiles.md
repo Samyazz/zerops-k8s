@@ -73,7 +73,8 @@ All listed endpoints are private and require an active Zerops VPN unless an oper
 
 | Endpoint | Full | Compact production | Minimal staging |
 |---|---|---|---|
-| Kubernetes API | `https://_dsr.k8sedge.zerops:6443` | `https://_dsr.k8sedge.zerops:6443` | `https://_dsr.k8sedge.zerops:6443` |
+| Kubernetes API over Zerops VPN | `https://k8sedge.zerops:6443` | `https://k8sedge.zerops:6443` | `https://k8sedge.zerops:6443` |
+| Kubernetes API from project services (DSR) | `https://_dsr.k8sedge.zerops:6443` | `https://_dsr.k8sedge.zerops:6443` | `https://_dsr.k8sedge.zerops:6443` |
 | Demo/application ingress | `http://k8sedge.zerops:8080` | `http://k8sedge.zerops:8080` | `http://k8sedge.zerops:8080` |
 | Edge readiness | `http://k8sedge.zerops:18082/healthz` | `http://k8sedge.zerops:18082/healthz` | `http://k8sedge.zerops:18082/healthz` |
 | Headlamp | `http://k8sedge.zerops:18081` | Not installed | Not installed |

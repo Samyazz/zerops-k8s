@@ -82,6 +82,7 @@ set_profile_resource_tags() {
   store_project_variable K8S_VERSION "v${KUBERNETES_VERSION}"
   store_project_variable K8S_NODE_IMAGE "zerops-k8s-node:v${KUBERNETES_VERSION}"
   store_project_variable K8S_CONTROL_PLANE_ENDPOINT "$CONTROL_PLANE_ENDPOINT"
+  store_project_variable K8S_DSR_ENDPOINT "$DSR_ENDPOINT"
   store_project_variable K8S_POD_CIDR 10.244.0.0/16
   store_project_variable K8S_SERVICE_CIDR 10.96.0.0/16
   if [[ "$NODE_IMAGE_MODE" == object-storage ]]; then

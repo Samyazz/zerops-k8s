@@ -44,7 +44,7 @@ umask 077
 printf '%s' "$K8S_ADMIN_KUBECONFIG_B64" | base64 -d >"$HOME/.kube/zerops-k8s"
 ```
 
-The server in every generated kubeconfig is `https://_dsr.k8sedge.zerops:6443`. Its certificate contains that exact SAN, so clients do not need a separate TLS server-name override.
+The server in every generated kubeconfig is `https://k8sedge.zerops:6443`, the VPN-compatible DNS name for the two HAProxy replicas. Project-local clients may use `https://_dsr.k8sedge.zerops:6443`. The API certificate contains both names, so neither path needs a TLS server-name override.
 
 ## Deploy, reconcile and switch
 

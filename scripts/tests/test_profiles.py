@@ -13,7 +13,8 @@ EXPECTED = {
     "full": {
         "control_planes": ["k8scp1", "k8scp2", "k8scp3"],
         "workers": ["k8sworker1", "k8sworker2", "k8sworker3"],
-        "endpoint": "_dsr.k8sedge.zerops:6443",
+        "endpoint": "k8sedge.zerops:6443",
+        "dsr_endpoint": "_dsr.k8sedge.zerops:6443",
         "services": [
             "k8scp1", "k8scp2", "k8scp3", "k8sworker1", "k8sworker2",
             "k8sworker3", "k8sedge", "k8sbackups", "grafanadb",
@@ -28,7 +29,8 @@ EXPECTED = {
     "production": {
         "control_planes": ["k8scp1"],
         "workers": ["k8sworker1", "k8sworker2"],
-        "endpoint": "_dsr.k8sedge.zerops:6443",
+        "endpoint": "k8sedge.zerops:6443",
+        "dsr_endpoint": "_dsr.k8sedge.zerops:6443",
         "services": ["k8scp1", "k8sworker1", "k8sworker2", "k8sedge", "k8sbackups"],
         "gateway": "traefik",
         "storage": "longhorn",
@@ -38,7 +40,8 @@ EXPECTED = {
     "staging": {
         "control_planes": ["k8scp1"],
         "workers": ["k8sworker1"],
-        "endpoint": "_dsr.k8sedge.zerops:6443",
+        "endpoint": "k8sedge.zerops:6443",
+        "dsr_endpoint": "_dsr.k8sedge.zerops:6443",
         "services": ["k8scp1", "k8sworker1", "k8sedge"],
         "gateway": "traefik",
         "storage": "none",
@@ -172,6 +175,10 @@ class ProfileContractTests(unittest.TestCase):
                 text = import_path(name).read_text(encoding="utf-8")
                 self.assertIn(
                     f"K8S_CONTROL_PLANE_ENDPOINT: {profile['topology']['controlPlaneEndpoint']}",
+                    text,
+                )
+                self.assertIn(
+                    f"K8S_DSR_ENDPOINT: {profile['topology']['edge']['dsrEndpoint']}",
                     text,
                 )
                 backup = profile["topology"]["backup"]
@@ -350,7 +357,8 @@ class ProfileContractTests(unittest.TestCase):
                 self.assertTrue(edge["enabled"])
                 self.assertEqual(edge["hostname"], "k8sedge")
                 self.assertEqual(edge["containers"], 2)
-                self.assertEqual(profile["topology"]["controlPlaneEndpoint"], "_dsr.k8sedge.zerops:6443")
+                self.assertEqual(profile["topology"]["controlPlaneEndpoint"], "k8sedge.zerops:6443")
+                self.assertEqual(edge["dsrEndpoint"], "_dsr.k8sedge.zerops:6443")
                 service = next(item for item in profile["services"] if item["hostname"] == "k8sedge")
                 block = setup_blocks[service["setup"]]
                 self.assertRegex(block, r"- (?:&installHAProxy \||\*installHAProxy)")
@@ -384,7 +392,7 @@ class ProfileContractTests(unittest.TestCase):
         )
         self.assertEqual(
             result.stdout.strip(),
-            "full|k8scp1 k8scp2 k8scp3|k8sworker1 k8sworker2 k8sworker3|_dsr.k8sedge.zerops:6443",
+            "full|k8scp1 k8scp2 k8scp3|k8sworker1 k8sworker2 k8sworker3|k8sedge.zerops:6443",
         )
 
     def test_lib_resolves_all_profile_node_orders(self):

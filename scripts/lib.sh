@@ -38,10 +38,11 @@ readonly NODES=("${CONTROL_PLANES[@]}" "${WORKERS[@]}")
 CONTROL_PLANE_ENDPOINT=$(profile_json '.topology.controlPlaneEndpoint')
 EDGE_ENABLED=$(profile_json '.topology.edge.enabled')
 EDGE_HOSTNAME=$(jq -r '.topology.edge.hostname // ""' "$PROFILE_FILE")
+DSR_ENDPOINT=$(jq -r '.topology.edge.dsrEndpoint // ""' "$PROFILE_FILE")
 BACKUP_ENABLED=$(profile_json '.topology.backup.enabled')
 BACKUP_HOSTNAME=$(jq -r '.topology.backup.hostname // ""' "$PROFILE_FILE")
 NODE_IMAGE_MODE=$(profile_json '.nodeImage.mode')
-readonly CONTROL_PLANE_ENDPOINT EDGE_ENABLED EDGE_HOSTNAME
+readonly CONTROL_PLANE_ENDPOINT EDGE_ENABLED EDGE_HOSTNAME DSR_ENDPOINT
 readonly BACKUP_ENABLED BACKUP_HOSTNAME NODE_IMAGE_MODE
 
 log() { printf '[zerops-k8s] %s\n' "$*"; }

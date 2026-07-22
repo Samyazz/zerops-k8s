@@ -35,6 +35,8 @@ grep -Fq "K8S_NODE_IMAGE: zerops-k8s-node:v${KUBERNETES_VERSION}" "$import_file"
   || die "$import_file node image differs from versions.env"
 grep -Fq "K8S_CONTROL_PLANE_ENDPOINT: ${CONTROL_PLANE_ENDPOINT}" "$import_file" \
   || die "$import_file control-plane endpoint differs from the profile descriptor"
+grep -Fq "K8S_DSR_ENDPOINT: ${DSR_ENDPOINT}" "$import_file" \
+  || die "$import_file DSR endpoint differs from the profile descriptor"
 core_package=$(profile_json '.project.corePackage')
 grep -Fq "corePackage: ${core_package}" "$import_file" \
   || die "$import_file core package differs from the profile descriptor"

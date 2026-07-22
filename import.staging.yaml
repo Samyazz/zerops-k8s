@@ -17,7 +17,8 @@ project:
     K8S_REPOSITORY: Samyazz/zerops-k8s
     K8S_VERSION: v1.36.2
     K8S_NODE_IMAGE: zerops-k8s-node:v1.36.2
-    K8S_CONTROL_PLANE_ENDPOINT: _dsr.k8sedge.zerops:6443
+    K8S_CONTROL_PLANE_ENDPOINT: k8sedge.zerops:6443
+    K8S_DSR_ENDPOINT: _dsr.k8sedge.zerops:6443
     K8S_POD_CIDR: 10.244.0.0/16
     K8S_SERVICE_CIDR: 10.96.0.0/16
 

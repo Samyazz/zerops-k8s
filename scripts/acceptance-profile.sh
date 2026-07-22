@@ -372,6 +372,7 @@ expected_workers=${#WORKERS[@]}
 expected_nodes=${#NODES[@]}
 log "checking the resolved ${expected_control_planes}+${expected_workers} topology"
 "$ROOT_DIR/scripts/verify-dsr-api.sh" "$artifact_dir/dsr-api-certificate.txt"
+"$ROOT_DIR/scripts/verify-in-project-dsr.sh" "$artifact_dir/dsr-in-project-readyz.txt"
 kubectl get nodes -o wide | tee "$artifact_dir/nodes.txt"
 [[ $(kubectl get nodes -o json | jq '[.items[] | select(any(.status.conditions[]; .type=="Ready" and .status=="True"))] | length') -eq "$expected_nodes" ]]
 [[ $(kubectl get nodes -l node-role.kubernetes.io/control-plane -o name | wc -l) -eq "$expected_control_planes" ]]

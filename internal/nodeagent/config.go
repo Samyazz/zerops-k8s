@@ -25,11 +25,11 @@ type config struct {
 }
 
 func loadConfig() (config, error) {
-	controlPlaneEndpoint := env("K8S_CONTROL_PLANE_ENDPOINT", "_dsr.k8sedge.zerops:6443")
+	controlPlaneEndpoint := env("K8S_CONTROL_PLANE_ENDPOINT", "k8sedge.zerops:6443")
 	// kubeadm validates controlPlaneEndpoint as RFC-1123 and therefore rejects
-	// Zerops' reserved _dsr label. Cluster clients still use the DSR hostname;
-	// kubeadm uses the ordinary service name and the serving certificate is
-	// extended with the exact DSR SAN after kubeadm creates it.
+	// Zerops' reserved _dsr label. Normalize legacy recipes to the ordinary
+	// VPN-compatible service name; the serving certificate is still extended
+	// with the exact in-project DSR SAN after kubeadm creates it.
 	if controlPlaneEndpoint == "k8sedge:6443" ||
 		controlPlaneEndpoint == "k8sedge.zerops:6443" ||
 		controlPlaneEndpoint == "_dsr.k8sedge.zerops:6443" {

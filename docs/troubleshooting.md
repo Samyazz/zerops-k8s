@@ -13,7 +13,7 @@ Start every investigation by confirming the workflow's selected `profile` matche
 
 Use the correct VPN-only endpoint:
 
-- Every profile: `https://_dsr.k8sedge.zerops:6443`; first check `http://k8sedge.zerops:18082/healthz`, then inspect HAProxy logs and backend state on both edge containers.
+- Every profile over VPN: `https://k8sedge.zerops:6443`; project-local DSR: `https://_dsr.k8sedge.zerops:6443`. First check `http://k8sedge.zerops:18082/healthz`, then inspect HAProxy logs and backend state on both edge containers. A refused `_dsr` connection from a VPN client is a Zerops DSR/VPN boundary; use the generated kubeconfig endpoint.
 
 HAProxy uses the Zerops resolver from `/etc/resolv.conf` with short DNS holds. After a node-container replacement, confirm the backend changes from `DOWN` to `UP`; a permanently stale address indicates that the edge resolver configuration did not load.
 
