@@ -36,7 +36,14 @@ spec:
               exec sleep 2147483647
           readinessProbe:
             exec:
-              command: [sh, -ec, "test -d /sys/module/iscsi_tcp && test -d /sys/module/nfs && test -d /sys/module/dm_crypt"]
+              command:
+                - sh
+                - -ec
+                - |
+                  for module in iscsi_tcp nfs dm_crypt; do
+                    modprobe "$module"
+                    test -d "/sys/module/$module"
+                  done
             initialDelaySeconds: 1
             periodSeconds: 10
           securityContext:

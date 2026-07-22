@@ -137,6 +137,14 @@ class ClusterProfileManifestsTest(unittest.TestCase):
             self.assertTrue(resources["limits"]["cpu"])
             self.assertTrue(resources["limits"]["memory"])
 
+    def test_longhorn_prerequisite_probe_reasserts_kernel_modules(self):
+        daemonset = yaml.safe_load((ROOT / "kubernetes/longhorn-node-prerequisites.yaml").read_text())
+        container = daemonset["spec"]["template"]["spec"]["containers"][0]
+        readiness_script = container["readinessProbe"]["exec"]["command"][2]
+        self.assertIn('modprobe "$module"', readiness_script)
+        for module in ("iscsi_tcp", "nfs", "dm_crypt"):
+            self.assertIn(module, readiness_script)
+
     def test_gateway_and_security_are_mesh_independent(self):
         gateway = yaml_documents(ROOT / "kubernetes/profiles/common/gateway.yaml")
         self.assertEqual({document["kind"] for document in gateway}, {"Gateway", "HTTPRoute"})
