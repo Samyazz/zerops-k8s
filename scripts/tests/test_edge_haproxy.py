@@ -30,6 +30,8 @@ class HAProxyEdgeTests(unittest.TestCase):
         self.assertIn("check-ssl verify none", config)
         self.assertIn("resolvers zerops_dns", config)
         self.assertIn("resolve-prefer ipv4 init-addr libc,none", config)
+        self.assertIn("k8scp1.zerops:6443", config)
+        self.assertIn("k8sworker1.zerops:32080", config)
         self.assertEqual(config.count("server cp"), 3)
         self.assertEqual(config.count("server worker"), 3)
         self.assertEqual(config.count("server headlamp"), 3)

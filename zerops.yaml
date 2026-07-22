@@ -393,9 +393,9 @@ zerops:
           protocol: tcp
       envVariables:
         K8S_DSR_HOSTNAME: _dsr.k8sedge.zerops
-        K8S_EDGE_API_BACKENDS: k8scp1:6443,k8scp2:6443,k8scp3:6443
-        K8S_EDGE_INGRESS_BACKENDS: k8sworker1:32080,k8sworker2:32080,k8sworker3:32080
-        K8S_EDGE_HEADLAMP_BACKENDS: k8sworker1:32081,k8sworker2:32081,k8sworker3:32081
+        K8S_EDGE_API_BACKENDS: k8scp1.zerops:6443,k8scp2.zerops:6443,k8scp3.zerops:6443
+        K8S_EDGE_INGRESS_BACKENDS: k8sworker1.zerops:32080,k8sworker2.zerops:32080,k8sworker3.zerops:32080
+        K8S_EDGE_HEADLAMP_BACKENDS: k8sworker1.zerops:32081,k8sworker2.zerops:32081,k8sworker3.zerops:32081
       healthCheck:
         httpGet:
           port: 18082
@@ -542,8 +542,8 @@ zerops:
           protocol: tcp
       envVariables:
         K8S_DSR_HOSTNAME: _dsr.k8sedge.zerops
-        K8S_EDGE_API_BACKENDS: k8scp1:6443
-        K8S_EDGE_INGRESS_BACKENDS: k8sworker1:32080,k8sworker2:32080
+        K8S_EDGE_API_BACKENDS: k8scp1.zerops:6443
+        K8S_EDGE_INGRESS_BACKENDS: k8sworker1.zerops:32080,k8sworker2.zerops:32080
         K8S_EDGE_HEADLAMP_ENABLED: "false"
       healthCheck:
         httpGet:
@@ -658,8 +658,8 @@ zerops:
           protocol: tcp
       envVariables:
         K8S_DSR_HOSTNAME: _dsr.k8sedge.zerops
-        K8S_EDGE_API_BACKENDS: k8scp1:6443
-        K8S_EDGE_INGRESS_BACKENDS: k8sworker1:32080
+        K8S_EDGE_API_BACKENDS: k8scp1.zerops:6443
+        K8S_EDGE_INGRESS_BACKENDS: k8sworker1.zerops:32080
         K8S_EDGE_HEADLAMP_ENABLED: "false"
       healthCheck:
         httpGet:

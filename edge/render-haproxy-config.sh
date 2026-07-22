@@ -116,7 +116,7 @@ backend kubernetes_api_backends
     http-check send hdr Host k8sedge.zerops
     http-check expect status 200
 EOF
-  write_servers cp "${K8S_EDGE_API_BACKENDS:-k8scp1:6443,k8scp2:6443,k8scp3:6443}" \
+  write_servers cp "${K8S_EDGE_API_BACKENDS:-k8scp1.zerops:6443,k8scp2.zerops:6443,k8scp3.zerops:6443}" \
     'check-ssl verify none inter 2s fastinter 1s downinter 1s fall 3 rise 2'
 
   if [ "$ingress_enabled" = true ]; then
@@ -135,7 +135,7 @@ backend application_ingress_backends
     http-check send hdr Host k8sedge.zerops
     http-check expect status 200
 EOF
-    write_servers worker "${K8S_EDGE_INGRESS_BACKENDS:-k8sworker1:32080,k8sworker2:32080,k8sworker3:32080}" \
+    write_servers worker "${K8S_EDGE_INGRESS_BACKENDS:-k8sworker1.zerops:32080,k8sworker2.zerops:32080,k8sworker3.zerops:32080}" \
       'inter 2s fastinter 1s downinter 1s fall 3 rise 2'
   fi
 
@@ -152,7 +152,7 @@ backend headlamp_backends
     mode tcp
     balance roundrobin
 EOF
-    write_servers headlamp "${K8S_EDGE_HEADLAMP_BACKENDS:-k8sworker1:32081,k8sworker2:32081,k8sworker3:32081}" \
+    write_servers headlamp "${K8S_EDGE_HEADLAMP_BACKENDS:-k8sworker1.zerops:32081,k8sworker2.zerops:32081,k8sworker3.zerops:32081}" \
       'inter 2s fastinter 1s downinter 1s fall 3 rise 2'
   fi
 
