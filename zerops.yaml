@@ -367,7 +367,17 @@ zerops:
     run:
       base: go@1.22
       prepareCommands:
-        - sudo apk add --no-cache 'haproxy~3.2'
+        - &installHAProxy |
+          set -eu
+          if command -v apk >/dev/null 2>&1; then
+            sudo apk add --no-cache 'haproxy~3.2'
+          elif command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends haproxy
+          else
+            printf 'unsupported edge base: neither apk nor apt-get is available\n' >&2
+            exit 1
+          fi
       ports:
         - port: 8080
           httpSupport: true
@@ -519,7 +529,7 @@ zerops:
     run:
       base: go@1.22
       prepareCommands:
-        - sudo apk add --no-cache 'haproxy~3.2'
+        - *installHAProxy
       ports:
         - port: 8080
           httpSupport: true
@@ -634,7 +644,7 @@ zerops:
     run:
       base: go@1.22
       prepareCommands:
-        - sudo apk add --no-cache 'haproxy~3.2'
+        - *installHAProxy
       ports:
         - port: 8080
           httpSupport: true

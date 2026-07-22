@@ -339,7 +339,10 @@ class ProfileContractTests(unittest.TestCase):
         self.assertIn('test "$image_version" = "$K8S_VERSION"', selected)
 
     def test_every_profile_uses_redundant_dsr_haproxy_edge(self):
-        setup_blocks = blocks((ROOT / "zerops.yaml").read_text(encoding="utf-8"), "setup")
+        setup_text = (ROOT / "zerops.yaml").read_text(encoding="utf-8")
+        setup_blocks = blocks(setup_text, "setup")
+        self.assertIn("sudo apk add --no-cache 'haproxy~3.2'", setup_text)
+        self.assertIn("apt-get install -y --no-install-recommends haproxy", setup_text)
         for name in EXPECTED:
             with self.subTest(profile=name):
                 profile = load_profile(name)
@@ -350,7 +353,7 @@ class ProfileContractTests(unittest.TestCase):
                 self.assertEqual(profile["topology"]["controlPlaneEndpoint"], "_dsr.k8sedge.zerops:6443")
                 service = next(item for item in profile["services"] if item["hostname"] == "k8sedge")
                 block = setup_blocks[service["setup"]]
-                self.assertIn("sudo apk add --no-cache 'haproxy~3.2'", block)
+                self.assertRegex(block, r"- (?:&installHAProxy \||\*installHAProxy)")
                 self.assertIn("K8S_DSR_HOSTNAME: _dsr.k8sedge.zerops", block)
                 self.assertIn("start: ./run-haproxy.sh", block)
                 self.assertNotIn("K8S_MODE: edge", block)
