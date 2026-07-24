@@ -54,9 +54,9 @@ See [operations](docs/operations.md), [upgrades](docs/upgrades.md), [disaster re
 
 The imports are alternatives, not services to import side-by-side. Use exactly one topology per project:
 
-- [`import.yaml`](import.yaml) / [raw full import](https://raw.githubusercontent.com/Samyazz/zerops-k8s/0f3ddf700174be7cb71b158317b51151db4de6cf/import.yaml)
-- [`import.production.yaml`](import.production.yaml) / [raw compact-production import](https://raw.githubusercontent.com/Samyazz/zerops-k8s/0f3ddf700174be7cb71b158317b51151db4de6cf/import.production.yaml)
-- [`import.staging.yaml`](import.staging.yaml) / [raw minimal-staging import](https://raw.githubusercontent.com/Samyazz/zerops-k8s/0f3ddf700174be7cb71b158317b51151db4de6cf/import.staging.yaml)
+- [`import.yaml`](import.yaml) / [raw full import](https://raw.githubusercontent.com/Samyazz/zerops-k8s/e36f21d3a8fe9fab306125809c8290a9622edb16/import.yaml)
+- [`import.production.yaml`](import.production.yaml) / [raw compact-production import](https://raw.githubusercontent.com/Samyazz/zerops-k8s/e36f21d3a8fe9fab306125809c8290a9622edb16/import.production.yaml)
+- [`import.staging.yaml`](import.staging.yaml) / [raw minimal-staging import](https://raw.githubusercontent.com/Samyazz/zerops-k8s/e36f21d3a8fe9fab306125809c8290a9622edb16/import.staging.yaml)
 
 The raw links use the exact immutable commit that passed static, live backup,
 and evidence-safety acceptance. A release tag is only a human-friendly alias;

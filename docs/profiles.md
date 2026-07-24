@@ -18,9 +18,9 @@ The machine-readable descriptors in [`profiles/`](../profiles/) are the source o
 
 Use one of these version-controlled sources in Zerops' **Import a project** screen:
 
-- Full: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/0f3ddf700174be7cb71b158317b51151db4de6cf/import.yaml`
-- Compact production: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/0f3ddf700174be7cb71b158317b51151db4de6cf/import.production.yaml`
-- Minimal staging: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/0f3ddf700174be7cb71b158317b51151db4de6cf/import.staging.yaml`
+- Full: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/e36f21d3a8fe9fab306125809c8290a9622edb16/import.yaml`
+- Compact production: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/e36f21d3a8fe9fab306125809c8290a9622edb16/import.production.yaml`
+- Minimal staging: `https://raw.githubusercontent.com/Samyazz/zerops-k8s/e36f21d3a8fe9fab306125809c8290a9622edb16/import.staging.yaml`
 
 These URLs are pinned to the full immutable commit SHA that passed the recorded
 static and live acceptance gates. Release tags remain human-friendly aliases;

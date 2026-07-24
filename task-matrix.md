@@ -1,9 +1,9 @@
 # Kubernetes recipe variants — executable task matrix
 
-Status: implementation, static validation, and live staging/production acceptance complete; public recipe-link validation awaits repository visibility approval.
+Status: implementation, static validation, public recipe-link validation, and live staging/production acceptance complete.
 Repository: `Samyazz/zerops-k8s`  
 Target region: EU Central  
-Last reviewed: 2026-07-22
+Last reviewed: 2026-07-24
 
 ## Goal
 
@@ -180,19 +180,20 @@ Dependencies refer to task IDs. Tasks within the same dependency level may be im
 | [x] | W-03 | B-07, W-01 | Make cancellation/failure cleanup profile-aware and idempotent. A failed clean creation is destroyed; a failed same-profile reconciliation preserves the last healthy cluster unless it created partial services. | Repeated cleanup tests converge; cleanup failure sets the blocking project tag; a later explicit destroy clears it only after verification. |
 | [x] | W-04 | P-08, S-07, W-01 | Produce short-lived sanitized evidence with profile, resolved contract, exact service list, Kubernetes inventory, functional results, forbidden-component checks, and backup results when supported. | Artifact contains no secrets and uses one-day retention; a redaction test covers tokens, auth headers, cookies, emails, and IP addresses. |
 | [x] | D-01 | P-08, S-07 | Update README and architecture, operations, upgrades, recovery, security, troubleshooting, and cost documentation with a three-profile comparison and limitations. | Every workflow/profile combination and every access URL is documented; `production` is never described as control-plane HA. |
-| [ ] | D-02 | B-03, D-01 | Add first-class recipe publishing notes and direct import links for all three entry points. Explain that profile imports are alternative topologies, not simultaneous clusters. | Links resolve at the pushed commit and recipe descriptions match the exact inventories. Pending explicit approval to make the currently private repository public; unauthenticated import links otherwise return 404. |
+| [x] | D-02 | B-03, D-01 | Add first-class recipe publishing notes and direct import links for all three entry points. Explain that profile imports are alternative topologies, not simultaneous clusters. | The public immutable links resolve without authentication at the live-tested release commit and the recipe descriptions match the exact inventories. |
 | [x] | Q-01 | B-01 through W-04 | Add shell/Go/Python tests and fixtures for profile rendering, edge routing, service pruning, forbidden references, workflow capability gates, and evidence redaction. | `go test ./...`, `go vet ./...`, Python tests, `shellcheck scripts/*.sh edge/*.sh`, workflow lint, and `git diff --check` pass. |
-| [ ] | Q-02 | Q-01, D-02 | Run static clean-room validation for every import and workflow without changing Zerops. | All three imports validate, all manifests render server-side/dry-run against the supported Kubernetes version, and the repository is clean after the commit. |
+| [x] | Q-02 | Q-01, D-02 | Run static clean-room validation for every import and workflow without changing Zerops. | All three imports validate, all manifests render server-side/dry-run against the supported Kubernetes version, and the repository is clean after the commit. |
 | [x] | L-01 | Q-02 | Only when `LIVE_ACCEPTANCE=true`: preserve a fresh recovery point for the current live profile, switch to `staging`, deploy from clean state, run `S-07`, archive sanitized evidence, then destroy staging. | Staging run is green and no staging recipe-owned service remains after teardown. |
 | [x] | L-02 | L-01 | Deploy `production` from clean state, run `P-08`, including backup/restore and worker disruption, and archive sanitized evidence. | Production run is green, exact service inventory passes, no failed/partial service exists, and the cluster remains running if `FINAL_PROFILE=production`. |
 | [x] | L-03 | L-02 | If `FINAL_PROFILE` is not `production`, cleanly switch to the requested final profile and run its acceptance level before handoff. | Not applicable: `FINAL_PROFILE=production`; production remains running and its final state was reverified after L-02. |
 
 ## Live acceptance record
 
-All links below are owner-triggered GitHub Actions runs against the current
-`kubernetes-test` Zerops project. Evidence artifacts use one-day retention;
-downloaded copies were scanned locally with zero matches for the repository PAT,
-authorization values, private keys, cookies, email addresses, or IP addresses.
+The current link below is an owner-triggered GitHub Actions run against the
+`kubernetes-test` Zerops project. Its one-day evidence artifact was downloaded,
+audited, and removed locally after producing zero sensitive-pattern matches.
+Superseded Actions runs are historical identifiers only: their GitHub run logs
+and artifacts are deliberately deleted after the current acceptance run passes.
 
 Audit retry [29900531097](https://github.com/Samyazz/zerops-k8s/actions/runs/29900531097)
 correctly failed when the IPv6 evidence redactor corrupted an RFC3339 timestamp
@@ -212,6 +213,7 @@ sanitization.
 
 | Profile / operation | Successful run | Result |
 |---|---|---|
+| VRRP production clean deployment and acceptance | [30076866963](https://github.com/Samyazz/zerops-k8s/actions/runs/30076866963) | Exact commit `e36f21d3a8fe9fab306125809c8290a9622edb16`: five-service inventory, three Ready v1.36.2 nodes, two checksum-matching dynamic edge replicas, verified VIP certificate, Longhorn/etcd recovery points, worker rescheduling/rebalancing, Kubescape reporting, and Sonobuoy quick passed. An independent post-run master termination moved `10.0.71.222` between replicas in two seconds with API readiness preserved. A separate 15-second probe observed one HTTP 503 while the worker-disruption test converged, so this run is not claimed as strictly lossless ingress failover. |
 | Final-audit staging clean deployment and acceptance | [29902464449](https://github.com/Samyazz/zerops-k8s/actions/runs/29902464449) | Commit `4a3e5d3`: exact two-service inventory, two Ready `v1.36.2` nodes, networking/Gateway, metrics, security, fresh platform logs/statistics, Kubescape, and worker/control-plane recovery passed. |
 | Final-audit staging teardown | [29903753408](https://github.com/Samyazz/zerops-k8s/actions/runs/29903753408) | Both staging services and the nested cluster were removed; unrelated `zcp` remained. |
 | Final-audit production clean deployment and acceptance | [29903906707](https://github.com/Samyazz/zerops-k8s/actions/runs/29903906707) | Commit `4a3e5d3`: exact five-service inventory, three Ready `v1.36.2` nodes, a genuinely new replacement pod during worker failure with ingress preserved, rebalancing, Longhorn, fresh backups/logs/statistics, security, Kubescape, and Sonobuoy quick passed. |
