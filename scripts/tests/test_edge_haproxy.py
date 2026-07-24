@@ -8,6 +8,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 RENDER = ROOT / "edge" / "render-haproxy-config.sh"
 VRRP_RENDER = ROOT / "edge" / "render-keepalived-config.sh"
+SUPERVISOR = ROOT / "edge" / "run-vrrp-edge.sh"
 
 
 class HAProxyEdgeTests(unittest.TestCase):
@@ -74,6 +75,20 @@ class HAProxyEdgeTests(unittest.TestCase):
                         capture_output=True,
                     )
                     self.assertNotEqual(result.returncode, 0)
+
+    def test_supervisor_records_the_foreground_haproxy_pid_it_owns(self):
+        supervisor = SUPERVISOR.read_text(encoding="utf-8")
+        launch = supervisor.index('haproxy -db -f "$haproxy_config" &')
+        capture = supervisor.index("haproxy_pid=$!", launch)
+        record = supervisor.index(
+            'printf \'%s\\n\' "$haproxy_pid" >"$haproxy_pid_file"', capture
+        )
+        check = supervisor.index('"$script_dir/check-haproxy.sh"', record)
+
+        self.assertLess(launch, capture)
+        self.assertLess(capture, record)
+        self.assertLess(record, check)
+        self.assertNotIn('-p "$haproxy_pid_file"', supervisor)
 
 
 class KeepalivedEdgeTests(unittest.TestCase):

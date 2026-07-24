@@ -39,12 +39,9 @@ haproxy -c -f "$haproxy_config"
 sudo keepalived --config-test --use-file="$keepalived_config"
 
 rm -f "$haproxy_pid_file"
-haproxy -db -p "$haproxy_pid_file" -f "$haproxy_config" &
+haproxy -db -f "$haproxy_config" &
 haproxy_pid=$!
-for _ in 1 2 3 4 5; do
-  [ -s "$haproxy_pid_file" ] && kill -0 "$haproxy_pid" 2>/dev/null && break
-  sleep 0.2
-done
+printf '%s\n' "$haproxy_pid" >"$haproxy_pid_file"
 "$script_dir/check-haproxy.sh"
 
 printf '{"component":"vrrp-haproxy-edge","status":"starting","vip":"%s"}\n' \
