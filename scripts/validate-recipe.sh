@@ -33,10 +33,18 @@ grep -Fq "K8S_VERSION: v${KUBERNETES_VERSION}" "$import_file" \
   || die "$import_file K8S_VERSION differs from versions.env"
 grep -Fq "K8S_NODE_IMAGE: zerops-k8s-node:v${KUBERNETES_VERSION}" "$import_file" \
   || die "$import_file node image differs from versions.env"
-grep -Fq "K8S_CONTROL_PLANE_ENDPOINT: ${CONTROL_PLANE_ENDPOINT}" "$import_file" \
-  || die "$import_file control-plane endpoint differs from the profile descriptor"
-grep -Fq "K8S_DSR_ENDPOINT: ${DSR_ENDPOINT}" "$import_file" \
-  || die "$import_file DSR endpoint differs from the profile descriptor"
+[[ $(profile_json '.topology.controlPlaneEndpoint.mode') == vrrp ]] \
+  || die "$PROFILE_FILE control-plane endpoint is not VRRP"
+[[ "$CONTROL_PLANE_PORT" == 6443 ]] \
+  || die "$PROFILE_FILE control-plane endpoint port is not 6443"
+grep -Fq "K8S_VRRP_PREFIX_LENGTH: \"${VRRP_PREFIX_LENGTH}\"" "$import_file" \
+  || die "$import_file VRRP prefix differs from the profile descriptor"
+grep -Fq "K8S_VRRP_HOST_OCTET: \"${VRRP_HOST_OCTET}\"" "$import_file" \
+  || die "$import_file VRRP host octet differs from the profile descriptor"
+grep -Fq "K8S_VRRP_VIRTUAL_ROUTER_ID: \"${VRRP_VIRTUAL_ROUTER_ID}\"" "$import_file" \
+  || die "$import_file VRRP virtual-router ID differs from the profile descriptor"
+! grep -Eq '^[[:space:]]+K8S_(CONTROL_PLANE_ENDPOINT|VRRP_VIP):' "$import_file" \
+  || die "$import_file hard-codes a project-specific VRRP address"
 core_package=$(profile_json '.project.corePackage')
 grep -Fq "corePackage: ${core_package}" "$import_file" \
   || die "$import_file core package differs from the profile descriptor"

@@ -25,16 +25,7 @@ type config struct {
 }
 
 func loadConfig() (config, error) {
-	controlPlaneEndpoint := env("K8S_CONTROL_PLANE_ENDPOINT", "k8sedge.zerops:6443")
-	// kubeadm validates controlPlaneEndpoint as RFC-1123 and therefore rejects
-	// Zerops' reserved _dsr label. Normalize legacy recipes to the ordinary
-	// VPN-compatible service name; the serving certificate is still extended
-	// with the exact in-project DSR SAN after kubeadm creates it.
-	if controlPlaneEndpoint == "k8sedge:6443" ||
-		controlPlaneEndpoint == "k8sedge.zerops:6443" ||
-		controlPlaneEndpoint == "_dsr.k8sedge.zerops:6443" {
-		controlPlaneEndpoint = "k8sedge.zerops:6443"
-	}
+	controlPlaneEndpoint := os.Getenv("K8S_CONTROL_PLANE_ENDPOINT")
 	cfg := config{
 		Listen:               env("K8S_AGENT_LISTEN", ":18080"),
 		Token:                os.Getenv("K8S_AGENT_TOKEN"),
@@ -53,6 +44,9 @@ func loadConfig() (config, error) {
 	}
 	if cfg.Token == "" {
 		return cfg, fmt.Errorf("K8S_AGENT_TOKEN is required")
+	}
+	if cfg.ControlPlaneEndpoint == "" {
+		return cfg, fmt.Errorf("K8S_CONTROL_PLANE_ENDPOINT is required")
 	}
 	if cfg.Role != "control-plane" && cfg.Role != "worker" {
 		return cfg, fmt.Errorf("K8S_NODE_ROLE must be control-plane or worker")

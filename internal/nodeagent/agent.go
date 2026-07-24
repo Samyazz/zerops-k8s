@@ -420,7 +420,7 @@ func (a *agent) initCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.isJoined(r.Context()) {
-		if _, err := a.ensureAPIServerDSRSAN(r.Context()); err != nil {
+		if _, err := a.ensureAPIServerEndpointSAN(r.Context()); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -460,7 +460,7 @@ func (a *agent) initCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if _, err := a.ensureAPIServerDSRSAN(r.Context()); err != nil {
+	if _, err := a.ensureAPIServerEndpointSAN(r.Context()); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -499,7 +499,7 @@ func (a *agent) joinCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.isJoined(r.Context()) {
-		if _, err := a.ensureAPIServerDSRSAN(r.Context()); err != nil {
+		if _, err := a.ensureAPIServerEndpointSAN(r.Context()); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -536,7 +536,7 @@ func (a *agent) joinCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if _, err := a.ensureAPIServerDSRSAN(r.Context()); err != nil {
+	if _, err := a.ensureAPIServerEndpointSAN(r.Context()); err != nil {
 		writeError(w, err)
 		return
 	}

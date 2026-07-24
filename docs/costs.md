@@ -18,6 +18,6 @@ Outer services change the total:
 
 - `full` adds two small edge containers, Serious Core, 25 GB backup storage, PostgreSQL, Elasticsearch, Prometheus/Grafana and ELK/APM runtimes. A realistic demonstration total remains roughly **$400–$500+ per 30 days**, depending on observability allocation and retained data.
 - `production` adds two small edge containers, Serious Core and 25 GB private backup storage, but no dedicated observability/database services. Budget above the $156 node baseline for edge usage and the project core; object storage starts around $0.25/month before transfer/other applicable charges.
-- `staging` requests Lightweight Core for a new import and adds two small HAProxy edge containers, but no object storage or observability service. In an existing Serious-Core project the core cannot be downgraded, so its current core charge remains.
+- `staging` requests Lightweight Core for a new import and adds two small Keepalived/HAProxy edge containers, but no object storage or observability service. In an existing Serious-Core project the core cannot be downgraded, so its current core charge remains.
 
 Horizontal and vertical resize inputs change these numbers directly. Disk can grow but cannot shrink in place. The nested destroy operation clears cluster state, while profile switching or explicit service cleanup determines whether outer Zerops service charges stop. Delete unused recipe-owned runtimes after evaluation, keep staging disposable, and configure a spending warning in Zerops.

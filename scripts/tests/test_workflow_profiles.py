@@ -440,6 +440,14 @@ class WorkflowProfileContractTests(unittest.TestCase):
         self.assertIn("deployment failed before agent delivery", deploy)
         self.assertIn("purging recipe-owned outer services directly", destroy)
 
+    def test_legacy_edge_migration_is_backup_protected_and_clean(self):
+        deploy = (ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
+        self.assertIn('if [[ -z "${K8S_VRRP_VIP:-}" ]]', deploy)
+        self.assertIn("edge_migration_required=true", deploy)
+        self.assertIn("backup-protected clean cluster replacement", deploy)
+        self.assertIn('"$ROOT_DIR/scripts/prepare-profile-switch.sh" "$project_profile"', deploy)
+        self.assertIn("RECREATE_TARGET_RUNTIME_SERVICES=true", deploy)
+
     def test_compact_profiles_collect_platform_logs_and_resource_statistics(self):
         acceptance = (ROOT / "scripts" / "acceptance-profile.sh").read_text(encoding="utf-8")
         self.assertIn("collect_platform_log_evidence", acceptance)
@@ -1266,8 +1274,11 @@ class WorkflowProfileContractTests(unittest.TestCase):
             with (ROOT / "profiles" / f"{profile}.json").open(encoding="utf-8") as handle:
                 descriptor = json.load(handle)
             endpoint = descriptor["topology"]["controlPlaneEndpoint"]
-            self.assertIn(endpoint, readme)
-            self.assertIn(endpoint, guide)
+            self.assertEqual(endpoint, {"mode": "vrrp", "port": 6443})
+            self.assertIn("last `/24`", readme)
+            self.assertIn("last `/24`", guide)
+            self.assertIn(".222", readme)
+            self.assertIn(".222", guide)
             import_name = "import.yaml" if profile == "full" else f"import.{profile}.yaml"
             raw = (
                 "https://raw.githubusercontent.com/Samyazz/zerops-k8s/"

@@ -120,7 +120,7 @@ deploy_runtime_artifact() {
 
 deploy_edge_artifact() {
   local service=$1 setup=$2 attempt result
-  log "deploying HAProxy edge artifact to $service with setup $setup"
+  log "deploying Keepalived/HAProxy edge artifact to $service with setup $setup"
   for attempt in 1 2 3; do
     set +e
     timeout "${ZEROPS_DEPLOY_TIMEOUT:-35m}" zcli service deploy "$service" -P "$ZEROPS_PROJECT_ID" \
@@ -129,11 +129,11 @@ deploy_edge_artifact() {
     result=$?
     set -e
     (( result == 0 )) && return 0
-    (( result != 124 )) || die "Zerops HAProxy edge deployment timed out for $service"
-    log "HAProxy edge deployment failed on attempt $attempt; retrying $service"
+    (( result != 124 )) || die "Zerops VRRP/HAProxy edge deployment timed out for $service"
+    log "VRRP/HAProxy edge deployment failed on attempt $attempt; retrying $service"
     sleep 5
   done
-  die "HAProxy edge deployment failed after three attempts: $service"
+  die "VRRP/HAProxy edge deployment failed after three attempts: $service"
 }
 
 needs_node_artifact=false

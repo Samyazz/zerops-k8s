@@ -9,11 +9,16 @@
     "controlPlanes": ["k8scp1", "k8scp2", "k8scp3"],
     "workers": ["k8sworker1", "k8sworker2", "k8sworker3"],
     "optionalWorkers": ["k8sworker4"],
-    "controlPlaneEndpoint": "k8sedge.zerops:6443",
+    "controlPlaneEndpoint": {
+      "mode": "vrrp",
+      "port": 6443
+    },
     "edge": {
       "enabled": true,
       "hostname": "k8sedge",
-      "dsrEndpoint": "_dsr.k8sedge.zerops:6443",
+      "vrrpPrefixLength": 22,
+      "vrrpHostOctet": 222,
+      "vrrpVirtualRouterId": 222,
       "containers": 2
     },
     "backup": {

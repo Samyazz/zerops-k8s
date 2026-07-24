@@ -68,14 +68,15 @@ func newCertificateFixture(t *testing.T, dnsNames ...string) certificateFixture 
 	}
 }
 
-func TestAddDSRDNSNameProducesAClientVerifiableCertificate(t *testing.T) {
+func TestAddEndpointIPProducesAClientVerifiableCertificate(t *testing.T) {
 	fixture := newCertificateFixture(t, "k8sedge", "k8sedge.zerops")
-	updated, err := addDNSNameToCertificate(
+	const endpoint = "10.0.71.222"
+	updated, err := addEndpointToCertificate(
 		fixture.serverCert,
 		fixture.caCertificate,
 		fixture.caKey,
 		fixture.serverKey,
-		dsrAPIServerHostname,
+		endpoint,
 		time.Now(),
 	)
 	if err != nil {
@@ -85,21 +86,24 @@ func TestAddDSRDNSNameProducesAClientVerifiableCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, hostname := range []string{"k8sedge", "k8sedge.zerops", dsrAPIServerHostname} {
+	for _, hostname := range []string{"k8sedge", "k8sedge.zerops"} {
 		if !certificateHasDNSName(certificate, hostname) {
 			t.Fatalf("updated certificate is missing %s", hostname)
 		}
+	}
+	if !certificateHasEndpoint(certificate, endpoint) {
+		t.Fatalf("updated certificate is missing endpoint IP %s", endpoint)
 	}
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(fixture.caCertificate) {
 		t.Fatal("failed to add fixture CA")
 	}
-	if _, err := certificate.Verify(x509.VerifyOptions{Roots: roots, DNSName: dsrAPIServerHostname}); err != nil {
-		t.Fatalf("Go TLS clients cannot verify the DSR hostname: %v", err)
+	if _, err := certificate.Verify(x509.VerifyOptions{Roots: roots, DNSName: endpoint}); err != nil {
+		t.Fatalf("Go TLS clients cannot verify the endpoint IP: %v", err)
 	}
 }
 
-func TestEnsureAPIServerDSRSANIsAtomicAndIdempotent(t *testing.T) {
+func TestEnsureAPIServerEndpointSANIsAtomicAndIdempotent(t *testing.T) {
 	fixture := newCertificateFixture(t, "k8sedge", "k8sedge.zerops")
 	runner := &certificateRunner{files: map[string]string{
 		"ca.crt":        string(fixture.caCertificate),
@@ -108,10 +112,11 @@ func TestEnsureAPIServerDSRSANIsAtomicAndIdempotent(t *testing.T) {
 		"apiserver.key": string(fixture.serverKey),
 	}}
 	a := agent{cfg: config{
-		Role:          "control-plane",
-		ContainerName: "zerops-k8s-node",
+		Role:                 "control-plane",
+		ContainerName:        "zerops-k8s-node",
+		ControlPlaneEndpoint: "10.0.71.222:6443",
 	}, runner: runner}
-	updated, err := a.ensureAPIServerDSRSAN(context.Background())
+	updated, err := a.ensureAPIServerEndpointSAN(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,11 +127,12 @@ func TestEnsureAPIServerDSRSANIsAtomicAndIdempotent(t *testing.T) {
 	if !strings.Contains(joined, "mktemp /etc/kubernetes/pki/.apiserver.crt") ||
 		!strings.Contains(joined, "crictl ps --name kube-apiserver") ||
 		!strings.Contains(joined, "crictl stop") ||
-		!strings.Contains(joined, "openssl x509 -in \"$certificate\" -noout -checkhost") {
+		!strings.Contains(joined, "openssl x509 -in \"$certificate\" -noout \"$check_flag\"") ||
+		!strings.Contains(joined, "10.0.71.222 -checkip") {
 		t.Fatalf("atomic update or API restart command is incomplete: %s", joined)
 	}
 	firstCommandCount := len(runner.commands)
-	updated, err = a.ensureAPIServerDSRSAN(context.Background())
+	updated, err = a.ensureAPIServerEndpointSAN(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,16 +142,16 @@ func TestEnsureAPIServerDSRSANIsAtomicAndIdempotent(t *testing.T) {
 }
 
 type certificateRunner struct {
-	commands   []recordedCommand
-	files      map[string]string
-	servingDSR bool
+	commands        []recordedCommand
+	files           map[string]string
+	servingEndpoint bool
 }
 
 func (r *certificateRunner) run(_ context.Context, name string, args []string, stdin string) (string, error) {
 	r.commands = append(r.commands, recordedCommand{name: name, args: append([]string(nil), args...)})
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "openssl s_client -connect 127.0.0.1:6443") {
-		if r.servingDSR {
+		if r.servingEndpoint {
 			return "", nil
 		}
 		return "", errors.New("serving certificate has not reloaded")
@@ -159,7 +165,7 @@ func (r *certificateRunner) run(_ context.Context, name string, args []string, s
 		r.files["apiserver.crt"] = stdin
 	}
 	if strings.Contains(joined, "crictl stop") {
-		r.servingDSR = true
+		r.servingEndpoint = true
 	}
 	return "", nil
 }

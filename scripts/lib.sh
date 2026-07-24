@@ -35,14 +35,19 @@ mapfile -t CONTROL_PLANES < <(profile_json '.topology.controlPlanes[]')
 mapfile -t WORKERS < <(profile_json '.topology.workers[]')
 readonly CONTROL_PLANES WORKERS
 readonly NODES=("${CONTROL_PLANES[@]}" "${WORKERS[@]}")
-CONTROL_PLANE_ENDPOINT=$(profile_json '.topology.controlPlaneEndpoint')
+CONTROL_PLANE_PORT=$(profile_json '.topology.controlPlaneEndpoint.port')
+CONTROL_PLANE_ENDPOINT=${CONTROL_PLANE_ENDPOINT:-${K8S_CONTROL_PLANE_ENDPOINT:-}}
 EDGE_ENABLED=$(profile_json '.topology.edge.enabled')
 EDGE_HOSTNAME=$(jq -r '.topology.edge.hostname // ""' "$PROFILE_FILE")
-DSR_ENDPOINT=$(jq -r '.topology.edge.dsrEndpoint // ""' "$PROFILE_FILE")
+VRRP_PREFIX_LENGTH=$(jq -r '.topology.edge.vrrpPrefixLength // ""' "$PROFILE_FILE")
+VRRP_HOST_OCTET=$(jq -r '.topology.edge.vrrpHostOctet // ""' "$PROFILE_FILE")
+VRRP_VIRTUAL_ROUTER_ID=$(jq -r '.topology.edge.vrrpVirtualRouterId // ""' "$PROFILE_FILE")
+VRRP_VIP=${VRRP_VIP:-${K8S_VRRP_VIP:-}}
 BACKUP_ENABLED=$(profile_json '.topology.backup.enabled')
 BACKUP_HOSTNAME=$(jq -r '.topology.backup.hostname // ""' "$PROFILE_FILE")
 NODE_IMAGE_MODE=$(profile_json '.nodeImage.mode')
-readonly CONTROL_PLANE_ENDPOINT EDGE_ENABLED EDGE_HOSTNAME DSR_ENDPOINT
+readonly CONTROL_PLANE_PORT EDGE_ENABLED EDGE_HOSTNAME
+readonly VRRP_PREFIX_LENGTH VRRP_HOST_OCTET VRRP_VIRTUAL_ROUTER_ID
 readonly BACKUP_ENABLED BACKUP_HOSTNAME NODE_IMAGE_MODE
 
 log() { printf '[zerops-k8s] %s\n' "$*"; }
@@ -54,6 +59,58 @@ require_env() {
   for key in "$@"; do
     [[ -n "${!key:-}" ]] || die "required environment variable is unset: $key"
   done
+}
+
+ipv4_to_int() {
+  local address=${1:?ipv4_to_int requires an address}
+  local a b c d octet
+  IFS=. read -r a b c d <<<"$address"
+  [[ -n "$a" && -n "$b" && -n "$c" && -n "$d" && "$address" != *.*.*.*.* ]] || return 1
+  for octet in "$a" "$b" "$c" "$d"; do
+    [[ "$octet" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( 10#$octet <= 255 )) || return 1
+  done
+  printf '%s\n' "$(( (10#$a << 24) + (10#$b << 16) + (10#$c << 8) + 10#$d ))"
+}
+
+int_to_ipv4() {
+  local value=${1:?int_to_ipv4 requires an integer}
+  printf '%d.%d.%d.%d\n' \
+    "$(( (value >> 24) & 255 ))" "$(( (value >> 16) & 255 ))" \
+    "$(( (value >> 8) & 255 ))" "$(( value & 255 ))"
+}
+
+derive_vrrp_vip() {
+  local source_ip=${1:?derive_vrrp_vip requires a project IPv4 address}
+  local source_int subnet_size network_int broadcast_int last_24_network vip_int
+  [[ "$VRRP_PREFIX_LENGTH" =~ ^([1-9]|[12][0-9]|30)$ ]] \
+    || die "invalid profile VRRP prefix length: $VRRP_PREFIX_LENGTH"
+  [[ "$VRRP_HOST_OCTET" =~ ^([1-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-4])$ ]] \
+    || die "invalid profile VRRP host octet: $VRRP_HOST_OCTET"
+  source_int=$(ipv4_to_int "$source_ip") \
+    || die "cannot derive the VRRP VIP from invalid address: $source_ip"
+  subnet_size=$((1 << (32 - VRRP_PREFIX_LENGTH)))
+  network_int=$((source_int / subnet_size * subnet_size))
+  broadcast_int=$((network_int + subnet_size - 1))
+  last_24_network=$((broadcast_int - 255))
+  vip_int=$((last_24_network + VRRP_HOST_OCTET))
+  int_to_ipv4 "$vip_int"
+}
+
+resolve_vrrp_topology() {
+  local source_ip=${1:-}
+  local derived_vip
+  if [[ -z "$source_ip" ]]; then
+    source_ip=$(getent ahostsv4 "${EDGE_HOSTNAME}.zerops" \
+      | awk '{print $1}' | sort -u | head -n 1)
+  fi
+  [[ -n "$source_ip" ]] || die "could not resolve ${EDGE_HOSTNAME}.zerops to derive the VRRP VIP"
+  derived_vip=$(derive_vrrp_vip "$source_ip")
+  if [[ -n "${K8S_VRRP_VIP:-}" && "$K8S_VRRP_VIP" != "$derived_vip" ]]; then
+    die "stored K8S_VRRP_VIP $K8S_VRRP_VIP conflicts with derived VIP $derived_vip"
+  fi
+  VRRP_VIP=$derived_vip
+  CONTROL_PLANE_ENDPOINT="${VRRP_VIP}:${CONTROL_PLANE_PORT}"
+  export VRRP_VIP CONTROL_PLANE_ENDPOINT
 }
 
 load_zerops_env() {
@@ -77,6 +134,12 @@ load_zerops_env() {
       fi
       set +a
       rm -f "$env_file"
+      if [[ -n "${K8S_VRRP_VIP:-}" ]]; then
+        resolve_vrrp_topology "$K8S_VRRP_VIP"
+      elif [[ -n "${K8S_CONTROL_PLANE_ENDPOINT:-}" ]]; then
+        CONTROL_PLANE_ENDPOINT=$K8S_CONTROL_PLANE_ENDPOINT
+        export CONTROL_PLANE_ENDPOINT
+      fi
       return 0
     fi
     : >"$env_file"

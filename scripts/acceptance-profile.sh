@@ -116,7 +116,7 @@ collect_platform_log_evidence() {
     agent_request "$service" GET /v1/state >/dev/null
   done
   if [[ "$EDGE_ENABLED" == true ]]; then
-    http_probe "http://${EDGE_HOSTNAME}:8080/healthz" >/dev/null
+    http_probe "http://${VRRP_VIP}:8080/healthz" >/dev/null
   fi
 
   while read -r service; do
@@ -298,7 +298,7 @@ run_node_recovery_tests() {
     rescheduled_pod=''
     until [[ -n "$rescheduled_pod" ]] \
       && [[ $(kubectl -n workloads get deployment demo -o jsonpath='{.status.availableReplicas}') -ge 2 ]] \
-      && http_probe "http://${EDGE_HOSTNAME}:8080/healthz" >/dev/null; do
+      && http_probe "http://${VRRP_VIP}:8080/healthz" >/dev/null; do
       (( SECONDS < deadline )) \
         || die 'the demo did not reschedule with ingress available after a compact-production worker failure'
       rescheduled_pod=$(kubectl -n workloads get pods -l app=demo -o json \
@@ -371,8 +371,8 @@ expected_control_planes=${#CONTROL_PLANES[@]}
 expected_workers=${#WORKERS[@]}
 expected_nodes=${#NODES[@]}
 log "checking the resolved ${expected_control_planes}+${expected_workers} topology"
-"$ROOT_DIR/scripts/verify-dsr-api.sh" "$artifact_dir/dsr-api-certificate.txt"
-"$ROOT_DIR/scripts/verify-in-project-dsr.sh" "$artifact_dir/dsr-in-project-readyz.txt"
+"$ROOT_DIR/scripts/verify-vrrp-api.sh" "$artifact_dir/vrrp-api-certificate.txt"
+"$ROOT_DIR/scripts/verify-in-project-vrrp.sh" "$artifact_dir/vrrp-in-project-readyz.txt"
 kubectl get nodes -o wide | tee "$artifact_dir/nodes.txt"
 [[ $(kubectl get nodes -o json | jq '[.items[] | select(any(.status.conditions[]; .type=="Ready" and .status=="True"))] | length') -eq "$expected_nodes" ]]
 [[ $(kubectl get nodes -l node-role.kubernetes.io/control-plane -o name | wc -l) -eq "$expected_control_planes" ]]
@@ -435,7 +435,7 @@ if [[ "$K8S_PROFILE" == production ]]; then
       and .spec.limits[0].default == {"cpu":"250m","memory":"128Mi"}' >/dev/null
   kubectl -n workloads get poddisruptionbudget/demo horizontalpodautoscaler/demo resourcequota/workload-budget limitrange/workload-defaults \
     -o yaml >"$artifact_dir/workload-controls.yaml"
-  http_probe "http://${EDGE_HOSTNAME}:8080/healthz" | tee "$artifact_dir/ingress.txt"
+  http_probe "http://${VRRP_VIP}:8080/healthz" | tee "$artifact_dir/ingress.txt"
 else
   [[ $(kubectl -n workloads get deployment demo -o jsonpath='{.spec.replicas}') -eq 1 ]]
   if kubectl -n workloads get poddisruptionbudget/demo >/dev/null 2>&1; then
@@ -454,7 +454,7 @@ else
       and .spec.limits[0].default == {"cpu":"250m","memory":"128Mi"}' >/dev/null
   kubectl -n workloads get resourcequota/workload-budget limitrange/workload-defaults \
     -o yaml >"$artifact_dir/workload-controls.yaml"
-  http_probe "http://${EDGE_HOSTNAME}:8080/healthz" | tee "$artifact_dir/ingress.txt"
+  http_probe "http://${VRRP_VIP}:8080/healthz" | tee "$artifact_dir/ingress.txt"
 fi
 wait_metrics_api
 

@@ -13,8 +13,7 @@ EXPECTED = {
     "full": {
         "control_planes": ["k8scp1", "k8scp2", "k8scp3"],
         "workers": ["k8sworker1", "k8sworker2", "k8sworker3"],
-        "endpoint": "k8sedge.zerops:6443",
-        "dsr_endpoint": "_dsr.k8sedge.zerops:6443",
+        "endpoint": {"mode": "vrrp", "port": 6443},
         "services": [
             "k8scp1", "k8scp2", "k8scp3", "k8sworker1", "k8sworker2",
             "k8sworker3", "k8sedge", "k8sbackups", "grafanadb",
@@ -29,8 +28,7 @@ EXPECTED = {
     "production": {
         "control_planes": ["k8scp1"],
         "workers": ["k8sworker1", "k8sworker2"],
-        "endpoint": "k8sedge.zerops:6443",
-        "dsr_endpoint": "_dsr.k8sedge.zerops:6443",
+        "endpoint": {"mode": "vrrp", "port": 6443},
         "services": ["k8scp1", "k8sworker1", "k8sworker2", "k8sedge", "k8sbackups"],
         "gateway": "traefik",
         "storage": "longhorn",
@@ -40,8 +38,7 @@ EXPECTED = {
     "staging": {
         "control_planes": ["k8scp1"],
         "workers": ["k8sworker1"],
-        "endpoint": "k8sedge.zerops:6443",
-        "dsr_endpoint": "_dsr.k8sedge.zerops:6443",
+        "endpoint": {"mode": "vrrp", "port": 6443},
         "services": ["k8scp1", "k8sworker1", "k8sedge"],
         "gateway": "traefik",
         "storage": "none",
@@ -173,16 +170,12 @@ class ProfileContractTests(unittest.TestCase):
             with self.subTest(profile=name):
                 profile = load_profile(name)
                 text = import_path(name).read_text(encoding="utf-8")
-                self.assertIn(
-                    f"K8S_CONTROL_PLANE_ENDPOINT: {profile['topology']['controlPlaneEndpoint']}",
-                    text,
-                )
-                self.assertIn(
-                    f"K8S_DSR_ENDPOINT: {profile['topology']['edge']['dsrEndpoint']}",
-                    text,
-                )
-                backup = profile["topology"]["backup"]
                 edge = profile["topology"]["edge"]
+                self.assertIn(f'K8S_VRRP_PREFIX_LENGTH: "{edge["vrrpPrefixLength"]}"', text)
+                self.assertIn(f'K8S_VRRP_HOST_OCTET: "{edge["vrrpHostOctet"]}"', text)
+                self.assertNotIn("K8S_CONTROL_PLANE_ENDPOINT:", text)
+                self.assertNotIn("K8S_VRRP_VIP:", text)
+                backup = profile["topology"]["backup"]
                 services = import_services(name)
                 if backup["enabled"]:
                     self.assertIn(backup["hostname"], services)
@@ -345,11 +338,11 @@ class ProfileContractTests(unittest.TestCase):
         self.assertIn("docker image inspect --format '{{.Id}}'", selected)
         self.assertIn('test "$image_version" = "$K8S_VERSION"', selected)
 
-    def test_every_profile_uses_redundant_dsr_haproxy_edge(self):
+    def test_every_profile_uses_redundant_vrrp_haproxy_edge(self):
         setup_text = (ROOT / "zerops.yaml").read_text(encoding="utf-8")
         setup_blocks = blocks(setup_text, "setup")
-        self.assertIn("sudo apk add --no-cache 'haproxy~3.2'", setup_text)
-        self.assertIn("apt-get install -y --no-install-recommends haproxy", setup_text)
+        self.assertIn("sudo apk add --no-cache 'haproxy~3.2' 'keepalived~2.3' iproute2", setup_text)
+        self.assertIn("haproxy keepalived iproute2", setup_text)
         for name in EXPECTED:
             with self.subTest(profile=name):
                 profile = load_profile(name)
@@ -357,13 +350,20 @@ class ProfileContractTests(unittest.TestCase):
                 self.assertTrue(edge["enabled"])
                 self.assertEqual(edge["hostname"], "k8sedge")
                 self.assertEqual(edge["containers"], 2)
-                self.assertEqual(profile["topology"]["controlPlaneEndpoint"], "k8sedge.zerops:6443")
-                self.assertEqual(edge["dsrEndpoint"], "_dsr.k8sedge.zerops:6443")
+                self.assertEqual(
+                    profile["topology"]["controlPlaneEndpoint"],
+                    {"mode": "vrrp", "port": 6443},
+                )
+                self.assertEqual(edge["vrrpPrefixLength"], 22)
+                self.assertEqual(edge["vrrpHostOctet"], 222)
+                self.assertEqual(edge["vrrpVirtualRouterId"], 222)
                 service = next(item for item in profile["services"] if item["hostname"] == "k8sedge")
                 block = setup_blocks[service["setup"]]
-                self.assertRegex(block, r"- (?:&installHAProxy \||\*installHAProxy)")
-                self.assertIn("K8S_DSR_HOSTNAME: _dsr.k8sedge.zerops", block)
-                self.assertIn("start: ./edge/run-haproxy.sh", block)
+                self.assertRegex(block, r"- (?:&installVRRPEdge \||\*installVRRPEdge)")
+                self.assertIn('K8S_VRRP_PREFIX_LENGTH: "22"', block)
+                self.assertIn('K8S_VRRP_HOST_OCTET: "222"', block)
+                self.assertIn('K8S_VRRP_PRIORITY: "100"', block)
+                self.assertIn("start: ./edge/run-vrrp-edge.sh", block)
                 self.assertNotIn("K8S_MODE: edge", block)
                 self.assertNotIn("go build", block)
 
@@ -384,7 +384,7 @@ class ProfileContractTests(unittest.TestCase):
         command = (
             'source scripts/lib.sh; '
             'printf "%s|%s|%s|%s\\n" "$K8S_PROFILE" "${CONTROL_PLANES[*]}" '
-            '"${WORKERS[*]}" "$CONTROL_PLANE_ENDPOINT"'
+            '"${WORKERS[*]}" "$CONTROL_PLANE_PORT"'
         )
         result = subprocess.run(
             ["bash", "-c", command], cwd=ROOT, text=True, capture_output=True, check=True,
@@ -392,7 +392,22 @@ class ProfileContractTests(unittest.TestCase):
         )
         self.assertEqual(
             result.stdout.strip(),
-            "full|k8scp1 k8scp2 k8scp3|k8sworker1 k8sworker2 k8sworker3|k8sedge.zerops:6443",
+            "full|k8scp1 k8scp2 k8scp3|k8sworker1 k8sworker2 k8sworker3|6443",
+        )
+
+    def test_lib_derives_last_24_vrrp_address_from_any_project_peer(self):
+        command = (
+            'source scripts/lib.sh; '
+            'printf "%s|%s|%s|%s" "$(derive_vrrp_vip 10.0.68.29)" '
+            '"$(derive_vrrp_vip 10.0.69.47)" "$(derive_vrrp_vip 10.0.71.200)" '
+            '"$(derive_vrrp_vip 10.0.72.5)"'
+        )
+        result = subprocess.run(
+            ["bash", "-c", command], cwd=ROOT, text=True, capture_output=True, check=True,
+        )
+        self.assertEqual(
+            result.stdout,
+            "10.0.71.222|10.0.71.222|10.0.71.222|10.0.75.222",
         )
 
     def test_lib_resolves_all_profile_node_orders(self):

@@ -367,13 +367,14 @@ zerops:
     run:
       base: go@1.22
       prepareCommands:
-        - &installHAProxy |
+        - &installVRRPEdge |
           set -eu
           if command -v apk >/dev/null 2>&1; then
-            sudo apk add --no-cache 'haproxy~3.2'
+            sudo apk add --no-cache 'haproxy~3.2' 'keepalived~2.3' iproute2
           elif command -v apt-get >/dev/null 2>&1; then
             sudo apt-get update
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends haproxy
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              haproxy keepalived iproute2
           else
             printf 'unsupported edge base: neither apk nor apt-get is available\n' >&2
             exit 1
@@ -392,7 +393,10 @@ zerops:
           httpSupport: false
           protocol: tcp
       envVariables:
-        K8S_DSR_HOSTNAME: _dsr.k8sedge.zerops
+        K8S_VRRP_PREFIX_LENGTH: "22"
+        K8S_VRRP_HOST_OCTET: "222"
+        K8S_VRRP_VIRTUAL_ROUTER_ID: "222"
+        K8S_VRRP_PRIORITY: "100"
         K8S_EDGE_API_BACKENDS: k8scp1.zerops:6443,k8scp2.zerops:6443,k8scp3.zerops:6443
         K8S_EDGE_INGRESS_BACKENDS: k8sworker1.zerops:32080,k8sworker2.zerops:32080,k8sworker3.zerops:32080
         K8S_EDGE_HEADLAMP_BACKENDS: k8sworker1.zerops:32081,k8sworker2.zerops:32081,k8sworker3.zerops:32081
@@ -400,7 +404,7 @@ zerops:
         httpGet:
           port: 18082
           path: /healthz
-      start: ./edge/run-haproxy.sh
+      start: ./edge/run-vrrp-edge.sh
 
   # Compact-production nodes retain the S3-backed image cache and recovery
   # storage, but deliberately carry no references to the full observability
@@ -529,7 +533,7 @@ zerops:
     run:
       base: go@1.22
       prepareCommands:
-        - *installHAProxy
+        - *installVRRPEdge
       ports:
         - port: 8080
           httpSupport: true
@@ -541,7 +545,10 @@ zerops:
           httpSupport: false
           protocol: tcp
       envVariables:
-        K8S_DSR_HOSTNAME: _dsr.k8sedge.zerops
+        K8S_VRRP_PREFIX_LENGTH: "22"
+        K8S_VRRP_HOST_OCTET: "222"
+        K8S_VRRP_VIRTUAL_ROUTER_ID: "222"
+        K8S_VRRP_PRIORITY: "100"
         K8S_EDGE_API_BACKENDS: k8scp1.zerops:6443
         K8S_EDGE_INGRESS_BACKENDS: k8sworker1.zerops:32080,k8sworker2.zerops:32080
         K8S_EDGE_HEADLAMP_ENABLED: "false"
@@ -549,7 +556,7 @@ zerops:
         httpGet:
           port: 18082
           path: /healthz
-      start: ./edge/run-haproxy.sh
+      start: ./edge/run-vrrp-edge.sh
 
   # Staging builds the pinned Docker image independently in each runtime. It
   # verifies both the resulting immutable image ID and kubeadm version before
@@ -645,7 +652,7 @@ zerops:
     run:
       base: go@1.22
       prepareCommands:
-        - *installHAProxy
+        - *installVRRPEdge
       ports:
         - port: 8080
           httpSupport: true
@@ -657,7 +664,10 @@ zerops:
           httpSupport: false
           protocol: tcp
       envVariables:
-        K8S_DSR_HOSTNAME: _dsr.k8sedge.zerops
+        K8S_VRRP_PREFIX_LENGTH: "22"
+        K8S_VRRP_HOST_OCTET: "222"
+        K8S_VRRP_VIRTUAL_ROUTER_ID: "222"
+        K8S_VRRP_PRIORITY: "100"
         K8S_EDGE_API_BACKENDS: k8scp1.zerops:6443
         K8S_EDGE_INGRESS_BACKENDS: k8sworker1.zerops:32080
         K8S_EDGE_HEADLAMP_ENABLED: "false"
@@ -665,7 +675,7 @@ zerops:
         httpGet:
           port: 18082
           path: /healthz
-      start: ./edge/run-haproxy.sh
+      start: ./edge/run-vrrp-edge.sh
 
   # These two setups customize Zerops' first-class Prometheus/Grafana recipe.
   # They stay outside Kubernetes; the cluster only ships telemetry to them.

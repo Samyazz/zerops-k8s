@@ -8,16 +8,18 @@ Zerops is the infrastructure layer and Kubernetes is a nested control plane. Eac
 |---|---|---|---|
 | Control planes / stacked etcd | 3 | 1 | 1 |
 | Workers | 3, optionally 4 | 2, optionally 3 | 1 fixed |
-| Outer edge | Zerops DSR + 2 HAProxy `k8sedge` containers | Zerops DSR + 2 HAProxy `k8sedge` containers | Zerops DSR + 2 HAProxy `k8sedge` containers |
+| Outer edge | Keepalived VRRP + 2 HAProxy `k8sedge` containers | Keepalived VRRP + 2 HAProxy `k8sedge` containers | Keepalived VRRP + 2 HAProxy `k8sedge` containers |
 | Ingress | Istio Gateway API | Traefik Gateway API, 2 replicas | Traefik Gateway API, 1 replica |
 | Storage | Longhorn, 3 replicas | Longhorn, 2 replicas | No dynamic storage layer |
 | Backup target | Zerops `k8sbackups` | Zerops `k8sbackups` | None |
 | Dashboard | Headlamp | None | None |
 | Dedicated observability | Prometheus/Grafana and ELK/APM outer services; Alloy, Fluent Bit and exporters in-cluster | None | None |
 
-Every profile exposes the Kubernetes API through two names for the same two HAProxy edge replicas. Project services use the Zerops-owned DSR address `_dsr.k8sedge.zerops:6443`; VPN clients and GitHub Actions use `k8sedge.zerops:6443`, because the Zerops VPN resolver advertises the DSR address but its TCP path is refused. HAProxy on each container forwards only to kube-apiserver backends that pass an HTTPS `/readyz` check. HAProxy continuously resolves backend service FQDNs through the runtime-provided Zerops DNS server, so a replaced node container cannot leave a stale backend address cached at the edge. All profiles also proxy application ingress on `8080` to worker NodePort `32080`; `full` alone adds Headlamp on `18081` to worker NodePort `32081`. Edge readiness is available on `18082`.
+Every profile exposes the Kubernetes API through one project-local VRRP VIP. Each edge replica discovers its current default interface and address at startup and participates in multicast VRRP with identical `BACKUP`, priority, and `nopreempt` settings. The address tie-break elects one initial master; after failure the surviving replica keeps ownership instead of flapping when the replaced container returns with a new address. No peer address is rendered. The VIP policy selects host `.222` in the last `/24` of the discovered project `/22`, so each imported project gets its own derived address.
 
-The API certificate includes both `k8sedge.zerops` and `_dsr.k8sedge.zerops` exactly. Because kubeadm rejects underscores under its RFC-1123 validation, kubeadm receives `k8sedge.zerops` as its control-plane endpoint and the node agent atomically extends the generated serving certificate with the Zerops DSR SAN. This reconciliation repeats after control-plane upgrades. API Secrets are encrypted with the key generated and stored as a Zerops secret. kubeadm identity and cluster ownership remain profile-scoped so one repository cannot operate two nested clusters concurrently in the project.
+HAProxy on both containers listens on all local addresses and forwards only to kube-apiserver backends that pass HTTPS `/readyz`. It continuously resolves backend service FQDNs through Zerops DNS, so replaced node containers cannot leave stale backend addresses. Application ingress uses VIP port `8080`; `full` adds Headlamp on `18081`, and edge readiness is on `18082`. Keepalived tracks HAProxy and releases the VIP when the proxy or interface fails.
+
+The API certificate includes the derived VIP as an IP SAN. The node agent reconciles it for existing clusters and after control-plane upgrades. API Secrets are encrypted with the key generated and stored as a Zerops secret. kubeadm identity and cluster ownership remain profile-scoped so one repository cannot operate two nested clusters concurrently in the project.
 
 ## Networking and ingress
 

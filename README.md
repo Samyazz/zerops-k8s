@@ -6,7 +6,7 @@ This repository is a publishable Zerops recipe and owner-triggered GitHub Action
 |---|---|---|---|
 | `full` | 3 control planes, 3 workers, redundant edge, backup storage, Grafana/Prometheus and ELK/APM services | Calico, Istio ambient, Gateway API, Longhorn, cert-manager, Headlamp, metrics and telemetry collectors | Proper production demonstration with HA control plane and the complete operational stack |
 | `production` | 1 control plane, 2 workers, redundant edge, backup storage | Calico, Traefik Gateway API, Longhorn and metrics-server | Compact production with redundant workers and Zerops platform observability only |
-| `staging` | 1 control plane, 1 worker, redundant DSR/HAProxy edge | Calico, Traefik Gateway API and metrics-server | Minimal, disposable stage with no storage or observability service |
+| `staging` | 1 control plane, 1 worker, redundant VRRP/HAProxy edge | Calico, Traefik Gateway API and metrics-server | Minimal, disposable stage with no storage or observability service |
 
 All profiles use the pinned Kubernetes and add-on versions in [`versions.env`](versions.env), encrypted Kubernetes Secrets, audit logging, Pod Security Admission, least-privilege RBAC, NetworkPolicy defaults, resource-bounded demonstration workloads, and Kubescape reporting.
 
@@ -17,6 +17,8 @@ All profiles use the pinned Kubernetes and add-on versions in [`versions.env`](v
 Run **Deploy Zerops Kubernetes** from the repository's Actions page and select `profile`. The default is `full`, preserving existing callers. Deployment is manual and repository-owner-only. It uses the reusable workflow in [`.github/workflows/reusable-deploy.yml`](.github/workflows/reusable-deploy.yml), with no third-party Actions and GitHub-owned Actions pinned to full commit SHAs.
 
 The workflow acquires the repository-wide GitHub concurrency lock and the Zerops repository/profile lock, validates the selected profile before any mutation, reconciles its exact service inventory, deploys the nested cluster, runs profile-appropriate acceptance tests, and retains sanitized evidence for one day. A same-profile run reconciles in place. A profile change is a deliberate clean replacement; it never attempts to shrink a three-member etcd cluster into one member in place.
+
+The one-time migration from the retired edge contract to VRRP is also a backup-protected clean replacement because redeploying an outer Docker runtime would not preserve nested kubeadm state. Later VRRP-aware same-profile runs reconcile normally.
 
 Required repository configuration:
 
@@ -64,7 +66,7 @@ published imports remain pinned to the full commit SHA. Paste one raw file into
 profile-aware deployment workflow; do not paste a second profile import over a
 running cluster. See [profile and publishing details](docs/profiles.md).
 
-[`zerops.yaml`](zerops.yaml) defines the shared node and HAProxy edge build/run setups. Zerops supplies `_dsr.k8sedge.zerops` as the stable in-project service address and distributes connections over two edge containers in every profile. HAProxy then selects only healthy kube-apiserver backends using native TLS `/readyz` checks. Zerops VPN currently resolves the DSR name but refuses its TCP path, so generated kubeconfigs use the same two-replica HAProxy service through `k8sedge.zerops`; clean-room acceptance separately proves the VPN endpoint and the in-project DSR endpoint. The public imports contain no cluster credential values; the deployment workflow generates them locally and stores them as sensitive Zerops project secrets before any node code is deployed.
+[`zerops.yaml`](zerops.yaml) defines the shared node and Keepalived/HAProxy edge setups. Both edge replicas discover their current default interface and address whenever they start, then use multicast VRRP to elect one owner of a `/32` VIP. There are no static unicast peers, so replacing a container or changing either replica address requires no configuration update. The workflow and the edge independently derive host `.222` in the last `/24` of the project `/22`; in the current `10.0.68.0/22` project that is `10.0.71.222`. HAProxy selects only healthy kube-apiserver backends using native TLS `/readyz` checks. The public imports contain the allocation policy, not a project-specific address or credential.
 
 ## Access
 
@@ -72,17 +74,16 @@ Connect the Zerops VPN before using private cluster endpoints.
 
 | Surface | `full` | `production` | `staging` |
 |---|---|---|---|
-| Kubernetes API over Zerops VPN | `https://k8sedge.zerops:6443` | `https://k8sedge.zerops:6443` | `https://k8sedge.zerops:6443` |
-| Kubernetes API from project services (DSR) | `https://_dsr.k8sedge.zerops:6443` | `https://_dsr.k8sedge.zerops:6443` | `https://_dsr.k8sedge.zerops:6443` |
-| Application ingress | `http://k8sedge.zerops:8080` | `http://k8sedge.zerops:8080` | `http://k8sedge.zerops:8080` |
-| Edge health | `http://k8sedge.zerops:18082/healthz` | `http://k8sedge.zerops:18082/healthz` | `http://k8sedge.zerops:18082/healthz` |
-| Headlamp | `http://k8sedge.zerops:18081` | Not installed | Not installed |
+| Kubernetes API | `https://<derived-vrrp-vip>:6443` | `https://<derived-vrrp-vip>:6443` | `https://<derived-vrrp-vip>:6443` |
+| Application ingress | `http://<derived-vrrp-vip>:8080` | `http://<derived-vrrp-vip>:8080` | `http://<derived-vrrp-vip>:8080` |
+| Edge health | `http://<derived-vrrp-vip>:18082/healthz` | `http://<derived-vrrp-vip>:18082/healthz` | `http://<derived-vrrp-vip>:18082/healthz` |
+| Headlamp | `http://<derived-vrrp-vip>:18081` | Not installed | Not installed |
 | Grafana/Kibana | Their Zerops service pages and enabled subdomains | Not installed | Not installed |
 | Platform logs/statistics | Zerops service detail for every outer runtime | Zerops service detail for all four runtimes and backup storage health/quota | Zerops service detail for both nodes and the edge runtime |
 
 The API and Headlamp are VPN-only. Public application routing is deliberately not enabled by the recipe. Retrieve the admin kubeconfig and, for `full`, role-specific Headlamp tokens from sensitive Zerops project variables for the current successful GitHub run. Never put them in repository files or Action artifacts.
 
-The `_dsr` label is a Zerops-reserved private DNS name. kubeadm applies RFC-1123 validation and cannot accept that label directly in `controlPlaneEndpoint` or `apiServer.certSANs`; the node agent therefore gives kubeadm the ordinary `k8sedge.zerops` service name and atomically extends each generated kube-apiserver certificate with the exact `_dsr.k8sedge.zerops` SAN. The same certificate validates both endpoint names, and the generated VPN kubeconfig needs no `tls-server-name` override.
+The generated kubeconfig uses the resolved VIP directly. kubeadm includes that IP in `apiServer.certSANs`; the node agent also reconciles the endpoint IP atomically for an existing cluster migrating to this edge design and after control-plane upgrades. No `tls-server-name` override is required.
 
 ## License
 

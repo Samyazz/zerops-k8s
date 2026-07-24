@@ -194,8 +194,8 @@ func (a *agent) upgradeCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.cfg.Role == "control-plane" {
-		if _, err := a.ensureAPIServerDSRSAN(ctx); err != nil {
-			writeError(w, fmt.Errorf("restore DSR API certificate SAN after upgrade: %w", err))
+		if _, err := a.ensureAPIServerEndpointSAN(ctx); err != nil {
+			writeError(w, fmt.Errorf("restore API endpoint certificate SAN after upgrade: %w", err))
 			return
 		}
 	}

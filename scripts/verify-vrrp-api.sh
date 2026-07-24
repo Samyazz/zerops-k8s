@@ -8,8 +8,12 @@ require_env KUBECONFIG
 require kubectl
 require openssl
 
-evidence=${1:-${RUNNER_TEMP:-$ROOT_DIR/artifacts}/evidence/dsr-api-certificate.txt}
+evidence=${1:-${RUNNER_TEMP:-$ROOT_DIR/artifacts}/evidence/vrrp-api-certificate.txt}
 mkdir -p "$(dirname "$evidence")"
+expected_endpoint="${VRRP_VIP}:6443"
+[[ "$CONTROL_PLANE_ENDPOINT" == "$expected_endpoint" ]] \
+  || die "control-plane endpoint is $CONTROL_PLANE_ENDPOINT, expected VRRP endpoint $expected_endpoint"
+
 expected_server="https://${CONTROL_PLANE_ENDPOINT}"
 actual_server=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
 [[ "$actual_server" == "$expected_server" ]] \
@@ -18,22 +22,17 @@ tls_override=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.t
 [[ -z "$tls_override" ]] \
   || die 'kubeconfig unexpectedly relies on a tls-server-name override'
 
-dsr_host=${DSR_ENDPOINT%:*}
-dsr_port=${DSR_ENDPOINT##*:}
-[[ "$dsr_host" == _dsr.k8sedge.zerops && "$dsr_port" == 6443 ]] \
-  || die "profile does not declare the reviewed Zerops DSR API endpoint: $DSR_ENDPOINT"
-[[ "$CONTROL_PLANE_ENDPOINT" == k8sedge.zerops:6443 ]] \
-  || die "profile does not use the VPN-compatible HAProxy endpoint: $CONTROL_PLANE_ENDPOINT"
-
 certificate=$(mktemp)
 trap 'rm -f "$certificate"' EXIT
-timeout 15 openssl s_client -connect "$CONTROL_PLANE_ENDPOINT" -servername "$dsr_host" -showcerts </dev/null 2>/dev/null \
+timeout 15 openssl s_client -connect "$CONTROL_PLANE_ENDPOINT" \
+  -servername "$VRRP_VIP" -showcerts </dev/null 2>/dev/null \
   | openssl x509 -outform PEM >"$certificate"
-openssl x509 -in "$certificate" -noout -checkhost "$dsr_host" >/dev/null
+openssl x509 -in "$certificate" -noout -checkip "$VRRP_VIP" >/dev/null
 kubectl --request-timeout=15s get --raw=/readyz >/dev/null
 {
-  printf 'vpn-server=%s\n' "$actual_server"
-  printf 'in-project-dsr-server=https://%s\n' "$DSR_ENDPOINT"
+  printf 'vrrp-server=%s\n' "$actual_server"
+  printf 'vrrp-vip=%s\n' "$VRRP_VIP"
+  printf 'vrrp-virtual-router-id=%s\n' "$VRRP_VIRTUAL_ROUTER_ID"
   printf 'tls-server-name-override=absent\n'
   openssl x509 -in "$certificate" -noout -subject -issuer -dates -ext subjectAltName
 } >"$evidence"

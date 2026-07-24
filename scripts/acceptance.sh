@@ -106,8 +106,8 @@ kubectl get nodes -o wide | tee "$artifact_dir/nodes.txt"
 kubectl wait --for=condition=Ready nodes --all --timeout=5m
 wait_all_workload_pods_ready
 kubectl get pods -A -o wide | tee "$artifact_dir/pods.txt"
-"$ROOT_DIR/scripts/verify-dsr-api.sh" "$artifact_dir/dsr-api-certificate.txt"
-"$ROOT_DIR/scripts/verify-in-project-dsr.sh" "$artifact_dir/dsr-in-project-readyz.txt"
+"$ROOT_DIR/scripts/verify-vrrp-api.sh" "$artifact_dir/vrrp-api-certificate.txt"
+"$ROOT_DIR/scripts/verify-in-project-vrrp.sh" "$artifact_dir/vrrp-in-project-readyz.txt"
 kubectl get --raw=/readyz?verbose | tee "$artifact_dir/apiserver-readyz.txt"
 
 cat <<'YAML' | kubectl apply -f -
@@ -140,8 +140,8 @@ jq -n --arg source "$source_pod" --arg target "$target_ip:8080" \
   '{sourcePod:$source,target:$target,tcpConnected:true}' >"$artifact_dir/cross-node-network.json"
 kubectl -n workloads exec "$source_pod" -- getent hosts kubernetes.default.svc.cluster.local | tee "$artifact_dir/dns.txt"
 
-curl --fail --silent http://k8sedge:8080/healthz | tee "$artifact_dir/ingress.txt"
-curl --fail --silent http://k8sedge:18081/ >/dev/null
+curl --fail --silent "http://${VRRP_VIP}:8080/healthz" | tee "$artifact_dir/ingress.txt"
+curl --fail --silent "http://${VRRP_VIP}:18081/" >/dev/null
 
 if [[ "${SKIP_DISRUPTION_TESTS:-false}" != true ]]; then
   log 'disrupting one non-primary control plane and proving API failover'
@@ -198,7 +198,7 @@ spec:
       resources: {requests: {cpu: 5m, memory: 8Mi}, limits: {cpu: 50m, memory: 32Mi}}
 YAML
 kubectl -n workloads wait pod/telemetry-proof --for=condition=Ready --timeout=3m
-for _ in {1..50}; do curl --fail --silent http://k8sedge:8080/hostname >/dev/null; done
+for _ in {1..50}; do curl --fail --silent "http://${VRRP_VIP}:8080/hostname" >/dev/null; done
 audit_selector=$(jq -rn --arg value "zerops-audit-marker=$audit_marker" '$value | @uri')
 kubectl get --raw="/api/v1/namespaces?labelSelector=$audit_selector" >/dev/null
 

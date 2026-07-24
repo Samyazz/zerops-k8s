@@ -2,7 +2,7 @@
 set -eu
 
 config_path=${HAPROXY_CONFIG_PATH:-/home/zerops/haproxy.cfg}
-dsr_hostname=${K8S_DSR_HOSTNAME:-_dsr.k8sedge.zerops}
+vrrp_vip=${K8S_VRRP_VIP:?K8S_VRRP_VIP must be resolved before rendering HAProxy}
 dns_server=${K8S_EDGE_DNS_SERVER:-$(awk '$1 == "nameserver" {print $2; exit}' /etc/resolv.conf)}
 
 case "$dns_server" in
@@ -72,15 +72,15 @@ ingress_enabled=$(bool_value K8S_EDGE_INGRESS_ENABLED true)
 headlamp_enabled=$(bool_value K8S_EDGE_HEADLAMP_ENABLED true)
 
 [ "$api_enabled" = true ] || {
-  printf 'K8S_EDGE_API_ENABLED must remain true for the DSR control-plane endpoint\n' >&2
+  printf 'K8S_EDGE_API_ENABLED must remain true for the VRRP control-plane endpoint\n' >&2
   exit 1
 }
 
 umask 077
 {
   cat <<EOF
-# Generated at container start. The stable client endpoint is
-# https://${dsr_hostname}:6443 and is owned by the Zerops service DSR layer.
+# Generated at container start. Keepalived assigns ${vrrp_vip}/32 to exactly
+# one edge replica; HAProxy listens on all local addresses so the VIP can move.
 global
     log stdout format raw local0 info
     maxconn 4096

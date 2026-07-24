@@ -9,18 +9,20 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"net"
 	"time"
 )
 
-const dsrAPIServerHostname = "_dsr.k8sedge.zerops"
-
-// kubeadm correctly rejects the underscore in Zerops' reserved _dsr service
-// label as non-RFC-1123. Go's TLS verifier intentionally accepts underscores
-// used by private infrastructure, so extend kubeadm's generated serving
-// certificate after creation while leaving kubeadm's own endpoint valid.
-func (a *agent) ensureAPIServerDSRSAN(ctx context.Context) (bool, error) {
+// Reconcile the serving certificate after both initial bootstrap and upgrades.
+// This is required for an existing recipe-managed cluster whose stable endpoint
+// changes to the VRRP VIP without replacing its Kubernetes PKI.
+func (a *agent) ensureAPIServerEndpointSAN(ctx context.Context) (bool, error) {
 	if a.cfg.Role != "control-plane" {
 		return false, nil
+	}
+	endpointHost, _, err := net.SplitHostPort(a.cfg.ControlPlaneEndpoint)
+	if err != nil || endpointHost == "" {
+		return false, fmt.Errorf("parse control-plane endpoint %q", a.cfg.ControlPlaneEndpoint)
 	}
 	certificatePEM, err := a.readNestedPKIFile(ctx, "apiserver.crt")
 	if err != nil {
@@ -30,11 +32,11 @@ func (a *agent) ensureAPIServerDSRSAN(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("parse API server certificate: %w", err)
 	}
-	if certificateHasDNSName(certificate, dsrAPIServerHostname) && a.servingAPIServerHasDSRSAN(ctx) {
+	if certificateHasEndpoint(certificate, endpointHost) && a.servingAPIServerHasEndpointSAN(ctx, endpointHost) {
 		return false, nil
 	}
 
-	if !certificateHasDNSName(certificate, dsrAPIServerHostname) {
+	if !certificateHasEndpoint(certificate, endpointHost) {
 		caCertificatePEM, err := a.readNestedPKIFile(ctx, "ca.crt")
 		if err != nil {
 			return false, fmt.Errorf("read Kubernetes CA certificate: %w", err)
@@ -48,12 +50,12 @@ func (a *agent) ensureAPIServerDSRSAN(ctx context.Context) (bool, error) {
 			return false, fmt.Errorf("read API server key: %w", err)
 		}
 
-		updatedPEM, err := addDNSNameToCertificate(
+		updatedPEM, err := addEndpointToCertificate(
 			certificatePEM,
 			caCertificatePEM,
 			caKeyPEM,
 			serverKeyPEM,
-			dsrAPIServerHostname,
+			endpointHost,
 			time.Now(),
 		)
 		if err != nil {
@@ -73,12 +75,12 @@ crictl stop "$container_id" >/dev/null
 	if _, err := a.runner.run(ctx, "docker", []string{
 		"exec", a.cfg.ContainerName, "sh", "-ec", restart,
 	}, ""); err != nil {
-		return true, fmt.Errorf("restart kube-apiserver after DSR certificate update: %w", err)
+		return true, fmt.Errorf("restart kube-apiserver after endpoint certificate update: %w", err)
 	}
 	deadline := time.Now().Add(30 * time.Second)
-	for !a.servingAPIServerHasDSRSAN(ctx) {
+	for !a.servingAPIServerHasEndpointSAN(ctx, endpointHost) {
 		if time.Now().After(deadline) {
-			return true, fmt.Errorf("kube-apiserver did not present the DSR certificate within 30 seconds")
+			return true, fmt.Errorf("kube-apiserver did not present the endpoint certificate within 30 seconds")
 		}
 		select {
 		case <-ctx.Done():
@@ -86,21 +88,28 @@ crictl stop "$container_id" >/dev/null
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
-	log.Printf(`{"component":"node-agent","operation":"api-certificate-dsr-san","status":"reconciled"}`)
+	log.Printf(`{"component":"node-agent","operation":"api-certificate-endpoint-san","status":"reconciled","endpoint":%q}`, endpointHost)
 	return true, nil
 }
 
-func (a *agent) servingAPIServerHasDSRSAN(ctx context.Context) bool {
+func (a *agent) servingAPIServerHasEndpointSAN(ctx context.Context, endpointHost string) bool {
 	const verify = `
 set -eu
+host=$1
+check_flag=$2
 certificate=$(mktemp)
 trap 'rm -f "$certificate"' EXIT
-timeout 5 openssl s_client -connect 127.0.0.1:6443 -servername _dsr.k8sedge.zerops </dev/null 2>/dev/null \
+timeout 5 openssl s_client -connect 127.0.0.1:6443 -servername "$host" </dev/null 2>/dev/null \
   | openssl x509 -outform PEM >"$certificate"
-openssl x509 -in "$certificate" -noout -checkhost _dsr.k8sedge.zerops >/dev/null
+openssl x509 -in "$certificate" -noout "$check_flag" "$host" >/dev/null
 `
+	checkFlag := "-checkhost"
+	if net.ParseIP(endpointHost) != nil {
+		checkFlag = "-checkip"
+	}
 	_, err := a.runner.run(ctx, "docker", []string{
 		"exec", a.cfg.ContainerName, "sh", "-ec", verify,
+		"verify-endpoint", endpointHost, checkFlag,
 	}, "")
 	return err == nil
 }
@@ -133,12 +142,12 @@ trap - EXIT
 	return err
 }
 
-func addDNSNameToCertificate(certificatePEM, caCertificatePEM, caKeyPEM, serverKeyPEM []byte, hostname string, now time.Time) ([]byte, error) {
+func addEndpointToCertificate(certificatePEM, caCertificatePEM, caKeyPEM, serverKeyPEM []byte, endpoint string, now time.Time) ([]byte, error) {
 	certificate, err := parseCertificatePEM(certificatePEM)
 	if err != nil {
 		return nil, fmt.Errorf("parse API server certificate: %w", err)
 	}
-	if certificateHasDNSName(certificate, hostname) {
+	if certificateHasEndpoint(certificate, endpoint) {
 		return certificatePEM, nil
 	}
 	caCertificate, err := parseCertificatePEM(caCertificatePEM)
@@ -168,7 +177,13 @@ func addDNSNameToCertificate(certificatePEM, caCertificatePEM, caKeyPEM, serverK
 	template := *certificate
 	template.SerialNumber = serial
 	template.NotBefore = now.Add(-5 * time.Minute)
-	template.DNSNames = append(append([]string(nil), certificate.DNSNames...), hostname)
+	template.DNSNames = append([]string(nil), certificate.DNSNames...)
+	template.IPAddresses = append([]net.IP(nil), certificate.IPAddresses...)
+	if endpointIP := net.ParseIP(endpoint); endpointIP != nil {
+		template.IPAddresses = append(template.IPAddresses, endpointIP)
+	} else {
+		template.DNSNames = append(template.DNSNames, endpoint)
+	}
 	template.Raw = nil
 	template.RawTBSCertificate = nil
 	template.RawSubjectPublicKeyInfo = nil
@@ -181,7 +196,7 @@ func addDNSNameToCertificate(certificatePEM, caCertificatePEM, caKeyPEM, serverK
 
 	der, err := x509.CreateCertificate(rand.Reader, &template, caCertificate, serverSigner.Public(), caSigner)
 	if err != nil {
-		return nil, fmt.Errorf("issue API server certificate with DSR SAN: %w", err)
+		return nil, fmt.Errorf("issue API server certificate with endpoint SAN: %w", err)
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), nil
 }
@@ -220,4 +235,16 @@ func certificateHasDNSName(certificate *x509.Certificate, hostname string) bool 
 		}
 	}
 	return false
+}
+
+func certificateHasEndpoint(certificate *x509.Certificate, endpoint string) bool {
+	if endpointIP := net.ParseIP(endpoint); endpointIP != nil {
+		for _, candidate := range certificate.IPAddresses {
+			if candidate.Equal(endpointIP) {
+				return true
+			}
+		}
+		return false
+	}
+	return certificateHasDNSName(certificate, endpoint)
 }

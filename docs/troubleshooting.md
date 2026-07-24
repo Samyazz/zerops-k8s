@@ -13,9 +13,9 @@ Start every investigation by confirming the workflow's selected `profile` matche
 
 Use the correct VPN-only endpoint:
 
-- Every profile over VPN: `https://k8sedge.zerops:6443`; project-local DSR: `https://_dsr.k8sedge.zerops:6443`. First check `http://k8sedge.zerops:18082/healthz`, then inspect HAProxy logs and backend state on both edge containers. A refused `_dsr` connection from a VPN client is a Zerops DSR/VPN boundary; use the generated kubeconfig endpoint.
+- Every profile uses `https://<derived-vrrp-vip>:6443`. Read the exact address from `K8S_VRRP_VIP`, then check `http://<vip>:18082/healthz`, Keepalived election logs, and HAProxy backend state on both edge containers. Exactly one replica must own the VIP.
 
-HAProxy uses the Zerops resolver from `/etc/resolv.conf` with short DNS holds. After a node-container replacement, confirm the backend changes from `DOWN` to `UP`; a permanently stale address indicates that the edge resolver configuration did not load.
+Keepalived discovers the default interface and current `/22` address every time a replica starts; multicast VRRP has no static peer list. After an edge replacement, confirm the new address enters `BACKUP` and the current master retains the VIP. HAProxy uses the Zerops resolver from `/etc/resolv.conf` with short DNS holds; after a node-container replacement, confirm its backend changes from `DOWN` to `UP`.
 
 The workflows connect with `zcli vpn up --mtu 1280`. If small responses work but kubeconfig or larger transfers stall, reconnect with the same MTU. Never disable TLS verification for routine access.
 
@@ -23,7 +23,7 @@ An unavailable sole control plane is an expected API outage in `production` and 
 
 ## Application ingress is unavailable
 
-- Every profile: test `http://k8sedge.zerops:8080`, Gateway/HTTPRoute status, then worker NodePort `32080` from the private network.
+- Every profile: test `http://<derived-vrrp-vip>:8080`, Gateway/HTTPRoute status, then worker NodePort `32080` from the private network.
 
 `full` uses Istio; inspect its Gateway data plane and ambient components. `production` and `staging` use Traefik and must not have Istio resources. All profiles leave public routing disabled by default.
 

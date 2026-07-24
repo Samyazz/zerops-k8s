@@ -44,7 +44,9 @@ umask 077
 printf '%s' "$K8S_ADMIN_KUBECONFIG_B64" | base64 -d >"$HOME/.kube/zerops-k8s"
 ```
 
-The server in every generated kubeconfig is `https://k8sedge.zerops:6443`, the VPN-compatible DNS name for the two HAProxy replicas. Project-local clients may use `https://_dsr.k8sedge.zerops:6443`. The API certificate contains both names, so neither path needs a TLS server-name override.
+The server in every generated kubeconfig is `https://<derived-vrrp-vip>:6443`. The address is host `.222` in the last `/24` of the project `/22` and is stored as `K8S_VRRP_VIP`. Keepalived moves the `/32` between the two HAProxy replicas; the API certificate contains the VIP as an IP SAN, so no TLS server-name override is required.
+
+From a trusted project runtime, `scripts/verify-vrrp-failover.sh` checks that exactly one replica owns the VIP. Add `--disrupt` to terminate Keepalived on the elected master, measure takeover by the other replica, and prove the API remains reachable. The edge supervisor then lets Zerops replace the failed runtime; `nopreempt` prevents the returning container from stealing the VIP back.
 
 ## Deploy, reconcile and switch
 
