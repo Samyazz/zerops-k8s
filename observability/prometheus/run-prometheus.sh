@@ -2,6 +2,7 @@
 set -eu
 
 mkdir -p /var/www/data
+/var/www/render-alloy-targets.sh
 exec /var/www/prometheus \
   --config.file=/var/www/prometheus.yml \
   --storage.tsdb.path=/var/www/data \

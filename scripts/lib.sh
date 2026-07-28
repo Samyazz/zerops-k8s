@@ -614,3 +614,81 @@ ensure_project_cluster_secrets() {
   load_zerops_env
   require_env K8S_AGENT_TOKEN K8S_BOOTSTRAP_TOKEN K8S_CERTIFICATE_KEY K8S_ENCRYPTION_KEY
 }
+
+join_zerops_backends() {
+  local port=$1
+  shift
+  local host backends=() old_ifs=$IFS
+  [[ "$port" =~ ^[0-9]+$ ]] || die "join_zerops_backends requires a numeric port"
+  for host in "$@"; do
+    [[ "$host" =~ ^[a-z0-9]+$ ]] || die "invalid edge backend hostname: $host"
+    backends+=("${host}.zerops:${port}")
+  done
+  IFS=,
+  printf '%s' "${backends[*]}"
+  IFS=$old_ifs
+}
+
+edge_workers_for_count() {
+  local count=$1
+  local -a workers optional=()
+  [[ "$count" =~ ^[0-9]+$ ]] || die "edge worker count must be an integer"
+  (( count >= ${#WORKERS[@]} )) || die "edge worker count $count is below profile floor ${#WORKERS[@]}"
+  workers=("${WORKERS[@]}")
+  mapfile -t optional < <(profile_json '.topology.optionalWorkers[]?' 2>/dev/null || true)
+  if (( count > ${#workers[@]} )); then
+    [[ ${#optional[@]} -gt 0 ]] \
+      || die "profile $K8S_PROFILE has no optional worker for count $count"
+    workers+=("${optional[0]}")
+  fi
+  (( ${#workers[@]} == count )) \
+    || die "internal edge worker list mismatch: expected $count, got ${#workers[@]}"
+  printf '%s\n' "${workers[@]}"
+}
+
+sync_edge_backend_variables() {
+  local worker_count=${1:-${#WORKERS[@]}}
+  local -a workers
+  mapfile -t workers < <(edge_workers_for_count "$worker_count")
+  store_project_variable K8S_EDGE_API_BACKENDS \
+    "$(join_zerops_backends 6443 "${CONTROL_PLANES[@]}")"
+  store_project_variable K8S_EDGE_INGRESS_BACKENDS \
+    "$(join_zerops_backends 32080 "${workers[@]}")"
+  if [[ $(profile_json '.addons.dashboard') == true ]]; then
+    store_project_variable K8S_EDGE_HEADLAMP_BACKENDS \
+      "$(join_zerops_backends 32081 "${workers[@]}")"
+  fi
+}
+
+sync_alloy_scrape_targets() {
+  local worker_count=${1:-${#WORKERS[@]}}
+  local -a workers
+  mapfile -t workers < <(edge_workers_for_count "$worker_count")
+  store_project_variable K8S_ALLOY_SCRAPE_TARGETS \
+    "$(join_zerops_backends 12345 "${workers[@]}")"
+}
+
+redeploy_edge_runtime() {
+  [[ "$EDGE_ENABLED" == true ]] || return 0
+  require zcli
+  local setup version_name="edge-resync-${GITHUB_RUN_ID:-local}-$(date +%s)"
+  setup=$(jq -er --arg hostname "$EDGE_HOSTNAME" \
+    '.services[] | select(.hostname == $hostname) | .setup' "$PROFILE_FILE")
+  log "redeploying $EDGE_HOSTNAME so HAProxy reloads refreshed backend project variables"
+  timeout "${ZEROPS_DEPLOY_TIMEOUT:-35m}" zcli service deploy "$EDGE_HOSTNAME" -P "$ZEROPS_PROJECT_ID" \
+    --setup "$setup" --version-name "$version_name" \
+    --working-dir "$ROOT_DIR" --path-to-file-or-dir edge
+}
+
+redeploy_prometheus_runtime() {
+  [[ $(profile_json '.addons.observability') == advanced ]] || return 0
+  require zcli
+  local version_name="prometheus-resync-${GITHUB_RUN_ID:-local}-$(date +%s)"
+  local source_args=(--workspace-state all)
+  [[ -d "$ROOT_DIR/.git" ]] || source_args=(--no-git)
+  [[ "${GITHUB_ACTIONS:-false}" != true ]] && source_args=(--workspace-state clean)
+  log 'redeploying prometheus so Alloy scrape targets match the current worker floor'
+  timeout "${ZEROPS_DEPLOY_TIMEOUT:-35m}" zcli push prometheus -P "$ZEROPS_PROJECT_ID" \
+    --setup prometheus --version-name "$version_name" \
+    --working-dir "$ROOT_DIR" "${source_args[@]}"
+}

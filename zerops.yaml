@@ -397,9 +397,6 @@ zerops:
         K8S_VRRP_HOST_OCTET: "222"
         K8S_VRRP_VIRTUAL_ROUTER_ID: "222"
         K8S_VRRP_PRIORITY: "100"
-        K8S_EDGE_API_BACKENDS: k8scp1.zerops:6443,k8scp2.zerops:6443,k8scp3.zerops:6443
-        K8S_EDGE_INGRESS_BACKENDS: k8sworker1.zerops:32080,k8sworker2.zerops:32080,k8sworker3.zerops:32080
-        K8S_EDGE_HEADLAMP_BACKENDS: k8sworker1.zerops:32081,k8sworker2.zerops:32081,k8sworker3.zerops:32081
       healthCheck:
         httpGet:
           port: 18082
@@ -549,8 +546,6 @@ zerops:
         K8S_VRRP_HOST_OCTET: "222"
         K8S_VRRP_VIRTUAL_ROUTER_ID: "222"
         K8S_VRRP_PRIORITY: "100"
-        K8S_EDGE_API_BACKENDS: k8scp1.zerops:6443
-        K8S_EDGE_INGRESS_BACKENDS: k8sworker1.zerops:32080,k8sworker2.zerops:32080
         K8S_EDGE_HEADLAMP_ENABLED: "false"
       healthCheck:
         httpGet:
@@ -668,8 +663,6 @@ zerops:
         K8S_VRRP_HOST_OCTET: "222"
         K8S_VRRP_VIRTUAL_ROUTER_ID: "222"
         K8S_VRRP_PRIORITY: "100"
-        K8S_EDGE_API_BACKENDS: k8scp1.zerops:6443
-        K8S_EDGE_INGRESS_BACKENDS: k8sworker1.zerops:32080
         K8S_EDGE_HEADLAMP_ENABLED: "false"
       healthCheck:
         httpGet:
@@ -698,9 +691,11 @@ zerops:
           protocol: tcp
       prepareCommands:
         - curl -fsSLo /home/zerops/prometheus.tar.gz https://github.com/prometheus/prometheus/releases/download/v3.13.1/prometheus-3.13.1.linux-amd64.tar.gz
+        - printf '%s  /home/zerops/prometheus.tar.gz\n' 962b812371aff838d152b6ff2d56fdb7a6396f5542f48ebf73421b9721f0d103 | sha256sum -c
         - tar -xzf /home/zerops/prometheus.tar.gz -C /home/zerops --strip-components=1 prometheus-3.13.1.linux-amd64/prometheus prometheus-3.13.1.linux-amd64/promtool
       initCommands:
-        - cp /home/zerops/prometheus /home/zerops/promtool /var/www/
+        - cp /home/zerops/prometheus /home/zerops/promtool /home/zerops/render-alloy-targets.sh /var/www/
+        - chmod 0755 /var/www/render-alloy-targets.sh
         - mkdir -p /var/www/data
         - zsc object-storage restore --storage data_backups --name "${ZEROPS_StackName}-data" --ignore-non-existing /var/www/data
       envVariables:
@@ -726,6 +721,7 @@ zerops:
       deployFiles:
         - ./observability/grafana/~
     deploy:
+      temporaryShutdown: true
       readinessCheck:
         httpGet:
           port: 3000

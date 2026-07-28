@@ -118,6 +118,10 @@ set_profile_resource_tags() {
   set_cluster_tag worker-cpu "$(jq -er --arg node "$worker" '.services[] | select(.hostname == $node) | .resources.cpu' "$PROFILE_FILE")"
   set_cluster_tag worker-ram "$(jq -er --arg node "$worker" '.services[] | select(.hostname == $node) | .resources.ramGb' "$PROFILE_FILE")"
   set_cluster_tag worker-disk "$(jq -er --arg node "$worker" '.services[] | select(.hostname == $node) | .resources.diskGb' "$PROFILE_FILE")"
+  worker_count=$(cluster_tag_value workers)
+  worker_count=${worker_count:-${#WORKERS[@]}}
+  sync_edge_backend_variables "$worker_count"
+  sync_alloy_scrape_targets "$worker_count"
 }
 
 if [[ "$edge_migration_required" == true ]]; then
