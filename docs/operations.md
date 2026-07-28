@@ -80,6 +80,8 @@ The `desired_workers` input must be 3 or 4 for `full`, 2 or 3 for `production`, 
 
 Scale-in drains the retiring worker and evacuates Longhorn replicas before removing its Kubernetes and Zerops records. `full` never drops below three workers, and `production` never drops below two. Staging has no horizontal path.
 
+Horizontal scale-in/out also refreshes the project-level HAProxy backend lists and redeploys `k8sedge`. On `full`, Prometheus Alloy scrape targets are refreshed and the outer Prometheus runtime is redeployed so metrics follow the current worker floor.
+
 ## Backups
 
 Backups exist only for `full` and `production`.

@@ -183,7 +183,13 @@ add_optional_worker() {
   log "horizontally scaling from $baseline_workers workers to $max_workers"
   prepare_node_agent_artifact
   import_file=$(mktemp)
-  sed -n '1,1p' "$ROOT_DIR/import.yaml" >"$import_file"
+  case "$K8S_PROFILE" in
+    full) import_source="$ROOT_DIR/import.yaml" ;;
+    production) import_source="$ROOT_DIR/import.production.yaml" ;;
+    staging) import_source="$ROOT_DIR/import.staging.yaml" ;;
+    *) die "unsupported profile for optional worker import: $K8S_PROFILE" ;;
+  esac
+  sed -n '1,1p' "$import_source" >"$import_file"
   {
     printf 'services:\n'
     printf '  - hostname: %s\n' "$node"
@@ -306,6 +312,13 @@ set_cluster_tag cp-disk "$cp_disk"
 set_cluster_tag worker-cpu "$worker_cpu"
 set_cluster_tag worker-ram "$worker_ram"
 set_cluster_tag worker-disk "$worker_disk"
+
+sync_edge_backend_variables "$desired_workers"
+sync_alloy_scrape_targets "$desired_workers"
+if (( desired_workers != baseline_workers )); then
+  redeploy_edge_runtime
+  redeploy_prometheus_runtime
+fi
 
 # The Zerops VPN resolver can briefly lag the recovered control plane even
 # after the first successful readyz probe. Treat that as recovery time, not as

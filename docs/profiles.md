@@ -77,9 +77,9 @@ All listed endpoints are private and require an active Zerops VPN unless an oper
 | Demo/application ingress | `http://<derived-vrrp-vip>:8080` | `http://<derived-vrrp-vip>:8080` | `http://<derived-vrrp-vip>:8080` |
 | Edge readiness | `http://<derived-vrrp-vip>:18082/healthz` | `http://<derived-vrrp-vip>:18082/healthz` | `http://<derived-vrrp-vip>:18082/healthz` |
 | Headlamp | `http://<derived-vrrp-vip>:18081` | Not installed | Not installed |
-
-`<derived-vrrp-vip>` means host `.222` in the last `/24` of the edge runtime's discovered `/22`. For example, `10.0.68.0/22` produces `10.0.71.222`. The recipe never assumes the edge containers keep their individual addresses.
 | Node lifecycle agent | `http://NODE.zerops:18080/healthz` | `http://NODE.zerops:18080/healthz` | `http://NODE.zerops:18080/healthz` |
 | Grafana/Kibana | Zerops-assigned service subdomains | Not installed | Not installed |
+
+`<derived-vrrp-vip>` means host `.222` in the last `/24` of the edge runtime's discovered `/22`. For example, `10.0.68.0/22` produces `10.0.71.222`. The recipe never assumes the edge containers keep their individual addresses.
 
 The lifecycle agent's operational endpoints require the bearer credential held in Zerops secrets; its unauthenticated `/healthz` is only a readiness check. Kubeconfig and any full-profile Headlamp credentials are read from sensitive Zerops project variables created for the successful run, never from GitHub artifacts.
